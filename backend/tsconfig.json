@@ -1,6 +1,8 @@
 {
   "compilerOptions": {
-   
+    "rootDir": "./src",
+    "outDir": "./dist",
+
     "module": "Node16",
     "target": "esnext",
     "moduleResolution": "node16",
@@ -25,5 +27,7 @@
     "noUncheckedSideEffectImports": true,
     "moduleDetection": "force",
     "skipLibCheck": true
-  }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
 }

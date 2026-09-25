@@ -29,25 +29,67 @@ export const register = async (req: Request, res: Response) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const user = await prisma.user.create({
-      data: {
-        username,
-        email,
-        password: hashedPassword,
-        location,
-        avatarUrl,
-      },
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          username,
+          email,
+          password: hashedPassword,
+          location,
+          avatarUrl,
+        },
+      });
+
+      const freePlan = await tx.subscriptionPlan.findUnique({
+        where: {
+          name: "FREE",
+        },
+      });
+
+      if (!freePlan) {
+        throw new Error("FREE subscription plan not found");
+      }
+
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() + freePlan.durationDays);
+
+      const subscription = await tx.userSubscription.create({
+        data: {
+          userId: user.id,
+          planId: freePlan.id,
+          startDate: new Date(),
+          endDate,
+          isActive: true,
+          downloadsUsed: 0,
+        },
+      });
+
+      return {
+        user,
+        subscription,
+        plan: freePlan,
+      };
     });
 
     return res.status(201).json({
       success: true,
       message: "User registered successfully",
       user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        location: user.location,
-        avatarUrl: user.avatarUrl,
+        id: result.user.id,
+        username: result.user.username,
+        email: result.user.email,
+        location: result.user.location,
+        avatarUrl: result.user.avatarUrl,
+      },
+      subscription: {
+        id: result.subscription.id,
+        plan: result.plan.name,
+        price: result.plan.price,
+        startDate: result.subscription.startDate,
+        endDate: result.subscription.endDate,
+        downloadsLimit: result.plan.downloadLimit,
+        downloadsUsed: result.subscription.downloadsUsed,
+        maxFileSizeMB: result.plan.maxFileSizeMB,
       },
     });
   } catch (error) {

@@ -16,17 +16,19 @@ model User {
   role      UserRole @default(USER)
   createdAt DateTime @default(now())
 
-  comments  Comment[]
-  reactions CommentReaction[]
-  reports   CommentReport[]
-  histories CommentHistory[] @relation("HistoryActor")
+  comments      Comment[]
+  reactions     CommentReaction[]
+  reports       CommentReport[]
+  histories     CommentHistory[]   @relation("HistoryActor")
+  subscriptions UserSubscription[]
+  downloads     Download[]
 }
 
 model Comment {
-  id        Int      @id @default(autoincrement())
+  id        Int       @id @default(autoincrement())
   content   String
   language  String?
-  isEdited  Boolean  @default(false)
+  isEdited  Boolean   @default(false)
   deletedAt DateTime?
 
   createdAt DateTime @default(now())
@@ -75,8 +77,8 @@ model CommentReport {
 }
 
 model CommentHistory {
-  id        Int           @id @default(autoincrement())
-  action    HistoryAction
+  id     Int           @id @default(autoincrement())
+  action HistoryAction
 
   oldContent String?
   newContent String?
@@ -89,6 +91,70 @@ model CommentHistory {
   actorId Int
   actor   User @relation("HistoryActor", fields: [actorId], references: [id])
 }
+
+// ==========================================
+// SUBSCRIPTION SYSTEM
+// ==========================================
+
+model SubscriptionPlan {
+  id            Int      @id @default(autoincrement())
+  name          String   @unique
+  price         Decimal  @db.Decimal(10, 2)
+  durationDays  Int
+  downloadLimit Int
+  maxFileSizeMB Int
+  createdAt     DateTime @default(now())
+
+  subscriptions UserSubscription[]
+}
+
+// ==========================================
+// USER SUBSCRIPTIONS
+// ==========================================
+
+model UserSubscription {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  planId        Int
+  startDate     DateTime @default(now())
+  endDate       DateTime
+  isActive      Boolean  @default(true)
+  downloadsUsed Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User             @relation(fields: [userId], references: [id])
+  plan SubscriptionPlan @relation(fields: [planId], references: [id])
+
+  @@index([userId])
+  @@index([planId])
+}
+
+// ==========================================
+// DOWNLOAD MANAGEMENT
+// ==========================================
+
+model Download {
+  id          Int            @id @default(autoincrement())
+  userId      Int
+  videoUrl    String
+  videoTitle  String?
+  status      DownloadStatus @default(PENDING)
+  fileName    String?
+  fileSizeMB  Int?
+  createdAt   DateTime       @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
 
 enum ReactionType {
   LIKE
@@ -119,4 +185,12 @@ enum UserRole {
 enum HistoryAction {
   EDIT
   DELETE
+}
+
+enum DownloadStatus {
+  PENDING
+  DOWNLOADING
+  COMPLETED
+  FAILED
+  CANCELLED
 }

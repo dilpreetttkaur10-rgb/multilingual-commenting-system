@@ -5,6 +5,8 @@ import dotenv from "dotenv";
 import authRoutes from "./routes/authRoutes";
 import commentRoutes from "./routes/commentRoutes";
 import reportRoutes from "./routes/reportRoutes";
+import downloadRoutes from "./routes/downloadRoutes";
+import subscriptionRoutes from "./routes/subscriptionRoutes";
 
 dotenv.config();
 
@@ -34,6 +36,10 @@ app.use("/api/auth", authRoutes);
 app.use("/api/comments", commentRoutes);
 
 app.use("/api/reports", reportRoutes);
+
+app.use("/api/downloads", downloadRoutes);
+
+app.use("/api/subscriptions", subscriptionRoutes);
 
 // ==========================================
 // ROOT ROUTE
