@@ -4,17 +4,17 @@ import {
   getSubscriptionPlans,
   getCurrentSubscription,
   upgradeSubscription,
+  downgradeSubscription,
+  cancelSubscription,
   renewSubscription,
 } from "../controllers/subscriptionController";
 
-import {
-  authMiddleware,
-} from "../middleware/authMiddleware";
+import { authMiddleware } from "../middleware/authMiddleware";
 
 const router = Router();
 
 // ==========================================
-// PUBLIC SUBSCRIPTION PLANS
+// SUBSCRIPTION ROUTES
 // ==========================================
 
 router.get(
@@ -22,19 +22,11 @@ router.get(
   getSubscriptionPlans
 );
 
-// ==========================================
-// CURRENT SUBSCRIPTION
-// ==========================================
-
 router.get(
   "/current",
   authMiddleware,
   getCurrentSubscription
 );
-
-// ==========================================
-// UPGRADE SUBSCRIPTION
-// ==========================================
 
 router.post(
   "/upgrade",
@@ -42,9 +34,17 @@ router.post(
   upgradeSubscription
 );
 
-// ==========================================
-// RENEW SUBSCRIPTION
-// ==========================================
+router.post(
+  "/downgrade",
+  authMiddleware,
+  downgradeSubscription
+);
+
+router.post(
+  "/cancel",
+  authMiddleware,
+  cancelSubscription
+);
 
 router.post(
   "/renew",

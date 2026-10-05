@@ -17,6 +17,48 @@ const prisma = new PrismaClient({
 async function main() {
   console.log("Starting subscription plan seed...");
 
+  /*
+   * Rename existing plans so old subscriptions remain connected
+   * to the same database records.
+   */
+  const existingBasic = await prisma.subscriptionPlan.findUnique({
+    where: {
+      name: "BASIC",
+    },
+  });
+
+  if (existingBasic) {
+    await prisma.subscriptionPlan.update({
+      where: {
+        id: existingBasic.id,
+      },
+      data: {
+        name: "BRONZE",
+      },
+    });
+
+    console.log("Existing BASIC plan renamed to BRONZE.");
+  }
+
+  const existingPremium = await prisma.subscriptionPlan.findUnique({
+    where: {
+      name: "PREMIUM",
+    },
+  });
+
+  if (existingPremium) {
+    await prisma.subscriptionPlan.update({
+      where: {
+        id: existingPremium.id,
+      },
+      data: {
+        name: "SILVER",
+      },
+    });
+
+    console.log("Existing PREMIUM plan renamed to SILVER.");
+  }
+
   const plans = [
     {
       name: "FREE",
@@ -24,20 +66,62 @@ async function main() {
       durationDays: 30,
       downloadLimit: 5,
       maxFileSizeMB: 100,
+
+      premiumVideoAccess: false,
+      streamingQuality: "480p",
+      watchTimeMinutes: 60,
+      offlineDownloads: false,
+      adFreeViewing: false,
+      priorityContent: false,
+      exclusiveCourses: false,
     },
+
     {
-      name: "BASIC",
+      name: "BRONZE",
       price: 99,
       durationDays: 30,
       downloadLimit: 30,
       maxFileSizeMB: 500,
+
+      premiumVideoAccess: true,
+      streamingQuality: "720p",
+      watchTimeMinutes: 240,
+      offlineDownloads: true,
+      adFreeViewing: false,
+      priorityContent: false,
+      exclusiveCourses: false,
     },
+
     {
-      name: "PREMIUM",
+      name: "SILVER",
       price: 199,
-      durationDays: 30,
+      durationDays: 90,
       downloadLimit: 100,
       maxFileSizeMB: 2000,
+
+      premiumVideoAccess: true,
+      streamingQuality: "1080p",
+      watchTimeMinutes: 480,
+      offlineDownloads: true,
+      adFreeViewing: true,
+      priorityContent: true,
+      exclusiveCourses: false,
+    },
+
+    {
+      name: "GOLD",
+      price: 299,
+      durationDays: 365,
+      downloadLimit: 300,
+      maxFileSizeMB: 5000,
+
+      premiumVideoAccess: true,
+      streamingQuality: "4K",
+      watchTimeMinutes: 0,
+      offlineDownloads: true,
+      adFreeViewing: true,
+      priorityContent: true,
+      exclusiveCourses: true,
     },
   ];
 
@@ -46,12 +130,22 @@ async function main() {
       where: {
         name: plan.name,
       },
+
       update: {
         price: plan.price,
         durationDays: plan.durationDays,
         downloadLimit: plan.downloadLimit,
         maxFileSizeMB: plan.maxFileSizeMB,
+
+        premiumVideoAccess: plan.premiumVideoAccess,
+        streamingQuality: plan.streamingQuality,
+        watchTimeMinutes: plan.watchTimeMinutes,
+        offlineDownloads: plan.offlineDownloads,
+        adFreeViewing: plan.adFreeViewing,
+        priorityContent: plan.priorityContent,
+        exclusiveCourses: plan.exclusiveCourses,
       },
+
       create: plan,
     });
 
@@ -60,7 +154,7 @@ async function main() {
     );
   }
 
-  console.log("Subscription plans seeded successfully!");
+  console.log("\nSubscription plans seeded successfully!");
 }
 
 main()

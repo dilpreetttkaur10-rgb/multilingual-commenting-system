@@ -1,3 +1,4 @@
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -5,6 +6,10 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// ==========================================
+// USER
+// ==========================================
 
 model User {
   id        Int      @id @default(autoincrement())
@@ -19,10 +24,15 @@ model User {
   comments      Comment[]
   reactions     CommentReaction[]
   reports       CommentReport[]
-  histories     CommentHistory[]   @relation("HistoryActor")
+  histories     CommentHistory[] @relation("HistoryActor")
   subscriptions UserSubscription[]
   downloads     Download[]
+  payments      Payment[]
 }
+
+// ==========================================
+// COMMENTS
+// ==========================================
 
 model Comment {
   id        Int       @id @default(autoincrement())
@@ -46,6 +56,10 @@ model Comment {
   histories CommentHistory[]
 }
 
+// ==========================================
+// COMMENT REACTIONS
+// ==========================================
+
 model CommentReaction {
   id        Int          @id @default(autoincrement())
   type      ReactionType
@@ -59,6 +73,10 @@ model CommentReaction {
 
   @@unique([userId, commentId])
 }
+
+// ==========================================
+// COMMENT REPORTS
+// ==========================================
 
 model CommentReport {
   id        Int          @id @default(autoincrement())
@@ -75,6 +93,10 @@ model CommentReport {
 
   @@unique([reporterId, commentId])
 }
+
+// ==========================================
+// COMMENT HISTORY
+// ==========================================
 
 model CommentHistory {
   id     Int           @id @default(autoincrement())
@@ -97,15 +119,27 @@ model CommentHistory {
 // ==========================================
 
 model SubscriptionPlan {
-  id            Int      @id @default(autoincrement())
-  name          String   @unique
-  price         Decimal  @db.Decimal(10, 2)
+  id            Int     @id @default(autoincrement())
+  name          String  @unique
+  price         Decimal @db.Decimal(10, 2)
   durationDays  Int
   downloadLimit Int
   maxFileSizeMB Int
-  createdAt     DateTime @default(now())
+
+  // MEMBERSHIP FEATURES
+  premiumVideoAccess Boolean @default(false)
+  streamingQuality   String  @default("LOW")
+  watchTimeMinutes   Int     @default(60)
+
+  offlineDownloads Boolean @default(false)
+  adFreeViewing    Boolean @default(false)
+  priorityContent  Boolean @default(false)
+  exclusiveCourses Boolean @default(false)
+
+  createdAt DateTime @default(now())
 
   subscriptions UserSubscription[]
+  payments      Payment[]
 }
 
 // ==========================================
@@ -126,8 +160,52 @@ model UserSubscription {
   user User             @relation(fields: [userId], references: [id])
   plan SubscriptionPlan @relation(fields: [planId], references: [id])
 
+  payments Payment[]
+
   @@index([userId])
   @@index([planId])
+}
+
+// ==========================================
+// PAYMENT / BILLING SYSTEM
+// ==========================================
+
+model Payment {
+  id Int @id @default(autoincrement())
+
+  // USER / SUBSCRIPTION INFORMATION
+  userId         Int
+  planId         Int
+  subscriptionId Int?
+
+  user         User              @relation(fields: [userId], references: [id])
+  plan         SubscriptionPlan  @relation(fields: [planId], references: [id])
+  subscription UserSubscription? @relation(fields: [subscriptionId], references: [id])
+
+  // INVOICE INFORMATION
+  invoiceNumber String? @unique
+
+  // RAZORPAY INFORMATION
+  razorpayOrderId   String  @unique
+  razorpayPaymentId String? @unique
+  razorpaySignature String?
+
+  // PAYMENT DETAILS
+  amount   Decimal @db.Decimal(10, 2)
+  currency String  @default("INR")
+
+  status PaymentStatus @default(CREATED)
+
+  failureReason String?
+
+  // TIMESTAMPS
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([planId])
+  @@index([subscriptionId])
+  @@index([status])
 }
 
 // ==========================================
@@ -193,4 +271,16 @@ enum DownloadStatus {
   COMPLETED
   FAILED
   CANCELLED
+}
+
+// ==========================================
+// PAYMENT STATUS
+// ==========================================
+
+enum PaymentStatus {
+  CREATED
+  SUCCESS
+  FAILED
+  CANCELLED
+  REFUNDED
 }

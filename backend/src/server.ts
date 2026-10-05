@@ -1,3 +1,4 @@
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -7,6 +8,8 @@ import commentRoutes from "./routes/commentRoutes";
 import reportRoutes from "./routes/reportRoutes";
 import downloadRoutes from "./routes/downloadRoutes";
 import subscriptionRoutes from "./routes/subscriptionRoutes";
+import paymentRoutes from "./routes/paymentRoutes";
+import invoiceRoutes from "./routes/invoiceRoutes";
 
 dotenv.config();
 
@@ -40,6 +43,10 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/downloads", downloadRoutes);
 
 app.use("/api/subscriptions", subscriptionRoutes);
+
+app.use("/api/payments", paymentRoutes);
+
+app.use("/api/invoices", invoiceRoutes);
 
 // ==========================================
 // ROOT ROUTE
