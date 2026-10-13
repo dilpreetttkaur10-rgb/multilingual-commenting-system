@@ -1,4 +1,3 @@
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -12,22 +11,34 @@ datasource db {
 // ==========================================
 
 model User {
-  id        Int      @id @default(autoincrement())
-  username  String   @unique
-  email     String   @unique
+  id        Int     @id @default(autoincrement())
+  username  String  @unique
+  email     String  @unique
   password  String
   location  String?
   avatarUrl String?
+
+  // ACCOUNT / THEME SETTINGS
+  phoneNumber         String?
+  themePreference     ThemePreference     @default(DARK)
+  themePreferenceMode ThemePreferenceMode @default(AUTO)
+
   role      UserRole @default(USER)
   createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   comments      Comment[]
   reactions     CommentReaction[]
   reports       CommentReport[]
-  histories     CommentHistory[] @relation("HistoryActor")
+  histories     CommentHistory[]   @relation("HistoryActor")
   subscriptions UserSubscription[]
   downloads     Download[]
   payments      Payment[]
+
+  loginHistories   LoginHistory[]
+  otpVerifications OtpVerification[]
+  trustedDevices   TrustedDevice[]
+  sessions         UserSession[]
 }
 
 // ==========================================
@@ -126,7 +137,6 @@ model SubscriptionPlan {
   downloadLimit Int
   maxFileSizeMB Int
 
-  // MEMBERSHIP FEATURES
   premiumVideoAccess Boolean @default(false)
   streamingQuality   String  @default("LOW")
   watchTimeMinutes   Int     @default(60)
@@ -173,7 +183,6 @@ model UserSubscription {
 model Payment {
   id Int @id @default(autoincrement())
 
-  // USER / SUBSCRIPTION INFORMATION
   userId         Int
   planId         Int
   subscriptionId Int?
@@ -182,15 +191,12 @@ model Payment {
   plan         SubscriptionPlan  @relation(fields: [planId], references: [id])
   subscription UserSubscription? @relation(fields: [subscriptionId], references: [id])
 
-  // INVOICE INFORMATION
   invoiceNumber String? @unique
 
-  // RAZORPAY INFORMATION
   razorpayOrderId   String  @unique
   razorpayPaymentId String? @unique
   razorpaySignature String?
 
-  // PAYMENT DETAILS
   amount   Decimal @db.Decimal(10, 2)
   currency String  @default("INR")
 
@@ -198,7 +204,6 @@ model Payment {
 
   failureReason String?
 
-  // TIMESTAMPS
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -228,6 +233,137 @@ model Download {
 
   @@index([userId])
   @@index([status])
+}
+
+// ==========================================
+// LOGIN HISTORY / SECURITY
+// ==========================================
+
+model LoginHistory {
+  id Int @id @default(autoincrement())
+
+  userId Int?
+  user   User? @relation(fields: [userId], references: [id])
+
+  status LoginStatus @default(FAILED)
+
+  ipAddress String?
+
+  browserName    String?
+  browserVersion String?
+
+  operatingSystem String?
+  deviceType      DeviceType
+  deviceModel     String?
+
+  city      String?
+  state     String?
+  country   String?
+  latitude  Float?
+  longitude Float?
+
+  loginAt   DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  otpVerifications OtpVerification[]
+
+  @@index([userId])
+  @@index([ipAddress])
+  @@index([loginAt])
+  @@index([status])
+}
+
+// ==========================================
+// OTP VERIFICATION
+// ==========================================
+
+model OtpVerification {
+  id Int @id @default(autoincrement())
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+
+  loginHistoryId Int?
+  loginHistory   LoginHistory? @relation(fields: [loginHistoryId], references: [id])
+
+  otpHash String
+
+  purpose OtpPurpose @default(LOGIN)
+  status  OtpStatus  @default(PENDING)
+
+  attempts Int @default(0)
+
+  expiresAt  DateTime
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([loginHistoryId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+// ==========================================
+// TRUSTED DEVICES
+// ==========================================
+
+model TrustedDevice {
+  id Int @id @default(autoincrement())
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+
+  deviceFingerprint String
+
+  browserName     String?
+  browserVersion  String?
+  operatingSystem String?
+  deviceType      DeviceType
+  deviceModel     String?
+
+  ipAddress String?
+  city      String?
+  state     String?
+  country   String?
+
+  trustedUntil DateTime
+  lastUsedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+
+  @@unique([userId, deviceFingerprint])
+  @@index([userId])
+  @@index([trustedUntil])
+  @@index([revokedAt])
+}
+
+// ==========================================
+// USER SESSIONS
+// ==========================================
+
+model UserSession {
+  id Int @id @default(autoincrement())
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+
+  sessionTokenHash String @unique
+
+  ipAddress       String?
+  browserName     String?
+  browserVersion  String?
+  operatingSystem String?
+  deviceType      DeviceType
+  deviceModel     String?
+
+  createdAt    DateTime  @default(now())
+  lastActiveAt DateTime  @default(now())
+  expiresAt    DateTime
+  revokedAt    DateTime?
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
 }
 
 // ==========================================
@@ -283,4 +419,60 @@ enum PaymentStatus {
   FAILED
   CANCELLED
   REFUNDED
+}
+
+// ==========================================
+// THEME SETTINGS
+// ==========================================
+
+enum ThemePreference {
+  LIGHT
+  DARK
+}
+
+enum ThemePreferenceMode {
+  AUTO
+  MANUAL
+}
+
+// ==========================================
+// DEVICE INFORMATION
+// ==========================================
+
+enum DeviceType {
+  DESKTOP
+  MOBILE
+  TABLET
+  UNKNOWN
+}
+
+// ==========================================
+// LOGIN STATUS
+// ==========================================
+
+enum LoginStatus {
+  SUCCESS
+  FAILED
+  OTP_REQUIRED
+  OTP_FAILED
+  OTP_VERIFIED
+}
+
+// ==========================================
+// OTP STATUS
+// ==========================================
+
+enum OtpStatus {
+  PENDING
+  VERIFIED
+  FAILED
+  EXPIRED
+}
+
+// ==========================================
+// OTP PURPOSE
+// ==========================================
+
+enum OtpPurpose {
+  LOGIN
 }

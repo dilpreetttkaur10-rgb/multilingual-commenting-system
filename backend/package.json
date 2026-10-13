@@ -27,7 +27,8 @@
     "jsonwebtoken": "^9.0.3",
     "nodemailer": "^10.0.14",
     "pg": "^8.23.0",
-    "razorpay": "^2.9.8"
+    "razorpay": "^2.9.8",
+    "ua-parser-js": "^2.0.10"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
