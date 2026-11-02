@@ -28,7 +28,10 @@ interface RoomParticipant {
 
 const onlineUsers = new Map<number, Set<string>>();
 const activeCalls = new Map<string, ActiveCall>();
+
 const meetingRooms = new Map<string, Map<string, RoomParticipant>>();
+const meetingRoomHosts = new Map<string, number>();
+const lockedMeetingRooms = new Set<string>();
 
 function addOnlineUser(userId: number, socketId: string): void {
   let sockets = onlineUsers.get(userId);
@@ -76,6 +79,46 @@ function getRoomParticipants(roomId: string): MeetingParticipant[] {
   }));
 }
 
+function cleanupMeetingRoom(roomId: string): void {
+  const room = meetingRooms.get(roomId);
+
+  if (!room || room.size === 0) {
+    meetingRooms.delete(roomId);
+    meetingRoomHosts.delete(roomId);
+    lockedMeetingRooms.delete(roomId);
+  }
+}
+
+function transferMeetingHost(io: Server, roomId: string): void {
+  const room = meetingRooms.get(roomId);
+
+  if (!room || room.size === 0) {
+    cleanupMeetingRoom(roomId);
+    return;
+  }
+
+  const nextHost = room.values().next().value as
+    | RoomParticipant
+    | undefined;
+
+  if (!nextHost) {
+    cleanupMeetingRoom(roomId);
+    return;
+  }
+
+  meetingRoomHosts.set(roomId, nextHost.userId);
+
+  io.to(roomId).emit("room:host-changed", {
+    roomId,
+    hostUserId: nextHost.userId,
+    hostSocketId: nextHost.socketId,
+  });
+
+  console.log(
+    `Meeting ${roomId} host transferred to user ${nextHost.userId}`
+  );
+}
+
 export function createSocketServer(httpServer: HttpServer): Server {
   const io = new Server(httpServer, {
     cors: {
@@ -85,7 +128,7 @@ export function createSocketServer(httpServer: HttpServer): Server {
     },
   });
 
-  // Authenticate each socket using its login token and active database session.
+  // SOCKET AUTHENTICATION
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth?.token;
@@ -138,6 +181,7 @@ export function createSocketServer(httpServer: HttpServer): Server {
       }
 
       (socket as AuthenticatedSocket).userId = session.userId;
+
       next();
     } catch (error) {
       const message =
@@ -175,7 +219,6 @@ export function createSocketServer(httpServer: HttpServer): Server {
         targetUserId?: number | string;
         calleeId?: number | string;
       }) => {
-        // Support both the current frontend and the older payload format.
         const rawRecipientId = data?.targetUserId ?? data?.calleeId;
 
         const calleeId =
@@ -184,13 +227,6 @@ export function createSocketServer(httpServer: HttpServer): Server {
           String(rawRecipientId).trim() === ""
             ? NaN
             : Number(rawRecipientId);
-
-        console.log("Call invite received:", {
-          callerId: userId,
-          receivedData: data,
-          calleeId,
-          onlineUserIds: Array.from(onlineUsers.keys()),
-        });
 
         if (
           !Number.isSafeInteger(calleeId) ||
@@ -443,10 +479,15 @@ export function createSocketServer(httpServer: HttpServer): Server {
       });
 
       meetingRooms.set(roomId, room);
+      meetingRoomHosts.set(roomId, userId);
+      lockedMeetingRooms.delete(roomId);
+
       socket.join(roomId);
 
       socket.emit("room:created", {
         roomId,
+        hostUserId: userId,
+        locked: false,
         participants: getRoomParticipants(roomId),
       });
 
@@ -476,7 +517,16 @@ export function createSocketServer(httpServer: HttpServer): Server {
       if (room.has(socket.id)) {
         socket.emit("room:joined", {
           roomId,
+          hostUserId: meetingRoomHosts.get(roomId),
+          locked: lockedMeetingRooms.has(roomId),
           participants: getRoomParticipants(roomId),
+        });
+        return;
+      }
+
+      if (lockedMeetingRooms.has(roomId)) {
+        socket.emit("room:error", {
+          message: "This meeting is locked by the host.",
         });
         return;
       }
@@ -503,6 +553,8 @@ export function createSocketServer(httpServer: HttpServer): Server {
 
       socket.emit("room:joined", {
         roomId,
+        hostUserId: meetingRoomHosts.get(roomId),
+        locked: lockedMeetingRooms.has(roomId),
         participants: existingParticipants,
       });
 
@@ -514,6 +566,129 @@ export function createSocketServer(httpServer: HttpServer): Server {
 
       console.log(`User ${userId} joined meeting ${roomId}`);
     });
+
+    // HOST LOCK / UNLOCK MEETING
+    socket.on(
+      "room:lock",
+      (data: { roomId?: string; locked?: boolean }) => {
+        const roomId = String(data?.roomId ?? "").trim();
+        const room = meetingRooms.get(roomId);
+
+        if (!room || !room.has(socket.id)) {
+          socket.emit("room:error", {
+            message: "You are not a participant in this meeting.",
+          });
+          return;
+        }
+
+        if (meetingRoomHosts.get(roomId) !== userId) {
+          socket.emit("room:error", {
+            message: "Only the host can lock or unlock this meeting.",
+          });
+          return;
+        }
+
+        if (typeof data?.locked !== "boolean") {
+          socket.emit("room:error", {
+            message: "Lock status must be true or false.",
+          });
+          return;
+        }
+
+        if (data.locked) {
+          lockedMeetingRooms.add(roomId);
+        } else {
+          lockedMeetingRooms.delete(roomId);
+        }
+
+        io.to(roomId).emit("room:locked", {
+          roomId,
+          locked: data.locked,
+          hostUserId: userId,
+        });
+
+        console.log(
+          `Meeting ${roomId} ${
+            data.locked ? "locked" : "unlocked"
+          } by host ${userId}`
+        );
+      }
+    );
+
+    // HOST REMOVE PARTICIPANT
+    socket.on(
+      "room:remove-participant",
+      (data: { roomId?: string; targetSocketId?: string }) => {
+        const roomId = String(data?.roomId ?? "").trim();
+        const targetSocketId = String(
+          data?.targetSocketId ?? ""
+        ).trim();
+
+        const room = meetingRooms.get(roomId);
+
+        if (!room || !room.has(socket.id)) {
+          socket.emit("room:error", {
+            message: "You are not a participant in this meeting.",
+          });
+          return;
+        }
+
+        if (meetingRoomHosts.get(roomId) !== userId) {
+          socket.emit("room:error", {
+            message: "Only the host can remove participants.",
+          });
+          return;
+        }
+
+        if (!targetSocketId || targetSocketId === socket.id) {
+          socket.emit("room:error", {
+            message: "Invalid participant to remove.",
+          });
+          return;
+        }
+
+        const targetParticipant = room.get(targetSocketId);
+
+        if (!targetParticipant) {
+          socket.emit("room:error", {
+            message: "Participant not found in this meeting.",
+          });
+          return;
+        }
+
+        if (targetParticipant.userId === meetingRoomHosts.get(roomId)) {
+          socket.emit("room:error", {
+            message: "The host cannot be removed.",
+          });
+          return;
+        }
+
+        const targetSocket = io.sockets.sockets.get(targetSocketId);
+
+        room.delete(targetSocketId);
+
+        if (targetSocket) {
+          targetSocket.leave(roomId);
+
+          targetSocket.emit("room:participant-removed", {
+            roomId,
+            message: "The host removed you from this meeting.",
+          });
+        }
+
+        socket.to(roomId).emit("room:participant-left", {
+          roomId,
+          userId: targetParticipant.userId,
+          socketId: targetSocketId,
+        });
+
+        cleanupMeetingRoom(roomId);
+
+        console.log(
+          `Host ${userId} removed user ${targetParticipant.userId} from meeting ${roomId}`
+        );
+      }
+    );
 
     // ROOM CHAT MESSAGE
     socket.on(
@@ -545,7 +720,7 @@ export function createSocketServer(httpServer: HttpServer): Server {
           message,
           timestamp: new Date().toISOString(),
         });
-      },
+      }
     );
 
     // RAISE HAND
@@ -575,7 +750,7 @@ export function createSocketServer(httpServer: HttpServer): Server {
           socketId: socket.id,
           raised: data.raised,
         });
-      },
+      }
     );
 
     // LEAVE MEETING ROOM
@@ -587,6 +762,8 @@ export function createSocketServer(httpServer: HttpServer): Server {
         return;
       }
 
+      const wasHost = meetingRoomHosts.get(roomId) === userId;
+
       room.delete(socket.id);
       socket.leave(roomId);
 
@@ -596,9 +773,11 @@ export function createSocketServer(httpServer: HttpServer): Server {
         socketId: socket.id,
       });
 
-      if (room.size === 0) {
-        meetingRooms.delete(roomId);
+      if (wasHost) {
+        transferMeetingHost(io, roomId);
       }
+
+      cleanupMeetingRoom(roomId);
 
       socket.emit("room:left", { roomId });
 
@@ -634,6 +813,8 @@ export function createSocketServer(httpServer: HttpServer): Server {
           continue;
         }
 
+        const wasHost = meetingRoomHosts.get(roomId) === userId;
+
         room.delete(socket.id);
 
         socket.to(roomId).emit("room:participant-left", {
@@ -642,9 +823,11 @@ export function createSocketServer(httpServer: HttpServer): Server {
           socketId: socket.id,
         });
 
-        if (room.size === 0) {
-          meetingRooms.delete(roomId);
+        if (wasHost) {
+          transferMeetingHost(io, roomId);
         }
+
+        cleanupMeetingRoom(roomId);
       }
 
       console.log(

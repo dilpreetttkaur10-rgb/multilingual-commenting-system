@@ -18,6 +18,8 @@ type ChatMessage = {
 
 export default function MeetingRoomPage() {
   const socketRef = useRef<Socket | null>(null);
+  const myUserIdRef = useRef<number | null>(null);
+  const roomIdRef = useRef("");
 
   const [token, setToken] = useState("");
   const [roomId, setRoomId] = useState("");
@@ -25,12 +27,32 @@ export default function MeetingRoomPage() {
   const [inRoom, setInRoom] = useState(false);
   const [status, setStatus] = useState("Not connected");
 
+  const [myUserId, setMyUserId] = useState<number | null>(null);
+  const [hostUserId, setHostUserId] = useState<number | null>(null);
+  const [locked, setLocked] = useState(false);
+
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
 
   const [myHandRaised, setMyHandRaised] = useState(false);
   const [raisedHands, setRaisedHands] = useState<Record<string, boolean>>({});
+
+  const isHost =
+    myUserId !== null &&
+    hostUserId !== null &&
+    myUserId === hostUserId;
+
+  const resetMeetingState = () => {
+    setInRoom(false);
+    setParticipants([]);
+    setMessages([]);
+    setRaisedHands({});
+    setMyHandRaised(false);
+    setHostUserId(null);
+    setLocked(false);
+    roomIdRef.current = "";
+  };
 
   useEffect(() => {
     return () => {
@@ -41,6 +63,11 @@ export default function MeetingRoomPage() {
   const connectSocket = () => {
     socketRef.current?.disconnect();
     socketRef.current = null;
+
+    setConnected(false);
+    setMyUserId(null);
+    myUserIdRef.current = null;
+    resetMeetingState();
 
     if (!token.trim()) {
       setStatus("Login token required");
@@ -62,9 +89,11 @@ export default function MeetingRoomPage() {
     });
 
     socket.on(
-      "socket:ready",
-      (data: { success: boolean; message: string }) => {
-        setStatus(data.success ? "Authenticated successfully" : data.message);
+      "socket:connected",
+      (data: { userId: number; socketId: string }) => {
+        myUserIdRef.current = data.userId;
+        setMyUserId(data.userId);
+        setStatus(`Authenticated as User ${data.userId}`);
       }
     );
 
@@ -75,47 +104,82 @@ export default function MeetingRoomPage() {
 
     socket.on("disconnect", (reason) => {
       setConnected(false);
-      setInRoom(false);
+      resetMeetingState();
       setStatus(`Disconnected: ${reason}`);
     });
 
+    // ROOM CREATED
     socket.on(
       "room:created",
-      (data: { roomId: string; participants: Participant[] }) => {
+      (data: {
+        roomId: string;
+        hostUserId: number;
+        locked: boolean;
+        participants: Participant[];
+      }) => {
+        roomIdRef.current = data.roomId;
         setRoomId(data.roomId);
+        setHostUserId(data.hostUserId);
+        setLocked(data.locked);
         setParticipants(data.participants || []);
+        setMessages([]);
+        setRaisedHands({});
+        setMyHandRaised(false);
         setInRoom(true);
         setStatus("Meeting room created successfully");
       }
     );
 
+    // ROOM JOINED
     socket.on(
       "room:joined",
-      (data: { roomId: string; participants: Participant[] }) => {
+      (data: {
+        roomId: string;
+        hostUserId: number;
+        locked: boolean;
+        participants: Participant[];
+      }) => {
+        roomIdRef.current = data.roomId;
         setRoomId(data.roomId);
-        setParticipants(data.participants || []);
-        setInRoom(true);
+        setHostUserId(data.hostUserId);
+        setLocked(data.locked);
 
-        if (socket.id) {
-          setParticipants((prev) => {
-            const exists = prev.some((p) => p.socketId === socket.id);
-            return exists
-              ? prev
-              : [...prev, { userId: 0, socketId: socket.id! }];
+        const existingParticipants = data.participants || [];
+        const currentSocketId = socket.id;
+        const currentUserId = myUserIdRef.current;
+
+        const updatedParticipants = [...existingParticipants];
+
+        if (
+          currentSocketId &&
+          !updatedParticipants.some(
+            (participant) => participant.socketId === currentSocketId
+          )
+        ) {
+          updatedParticipants.push({
+            userId: currentUserId ?? 0,
+            socketId: currentSocketId,
           });
         }
 
+        setParticipants(updatedParticipants);
+        setMessages([]);
+        setRaisedHands({});
+        setMyHandRaised(false);
+        setInRoom(true);
         setStatus("Joined meeting room successfully");
       }
     );
 
+    // PARTICIPANT JOINED
     socket.on(
       "room:participant-joined",
       (data: Participant & { roomId: string }) => {
         setParticipants((prev) => {
-          if (prev.some((p) => p.socketId === data.socketId)) {
+          if (prev.some((participant) => participant.socketId === data.socketId)) {
             return prev;
           }
+
           return [...prev, data];
         });
 
@@ -123,11 +187,12 @@ export default function MeetingRoomPage() {
       }
     );
 
+    // PARTICIPANT LEFT
     socket.on(
       "room:participant-left",
       (data: Participant & { roomId: string }) => {
         setParticipants((prev) =>
-          prev.filter((p) => p.socketId !== data.socketId)
+          prev.filter((participant) => participant.socketId !== data.socketId)
         );
 
         setRaisedHands((prev) => {
@@ -140,6 +205,57 @@ export default function MeetingRoomPage() {
       }
     );
 
+    // HOST CHANGED
+    socket.on(
+      "room:host-changed",
+      (data: {
+        roomId: string;
+        hostUserId: number;
+        hostSocketId: string;
+      }) => {
+        setHostUserId(data.hostUserId);
+
+        setStatus(
+          data.hostUserId === myUserIdRef.current
+            ? "You are now the meeting host"
+            : `Meeting host changed to User ${data.hostUserId}`
+        );
+      }
+    );
+
+    // MEETING LOCKED / UNLOCKED
+    socket.on(
+      "room:locked",
+      (data: {
+        roomId: string;
+        locked: boolean;
+        hostUserId: number;
+      }) => {
+        setLocked(data.locked);
+        setHostUserId(data.hostUserId);
+
+        setStatus(
+          data.locked
+            ? "Meeting locked by host"
+            : "Meeting unlocked by host"
+        );
+      }
+    );
+
+    // PARTICIPANT REMOVED
+    socket.on(
+      "room:participant-removed",
+      (data: { roomId: string; message: string }) => {
+        if (data.roomId !== roomIdRef.current) {
+          return;
+        }
+
+        resetMeetingState();
+        setStatus(data.message || "You were removed from the meeting");
+      }
+    );
+
+    // ROOM CHAT
     socket.on(
       "room:message",
       (data: ChatMessage & { roomId: string }) => {
@@ -147,6 +263,7 @@ export default function MeetingRoomPage() {
       }
     );
 
+    // RAISE HAND
     socket.on(
       "room:raise-hand",
       (data: {
@@ -162,16 +279,14 @@ export default function MeetingRoomPage() {
       }
     );
 
+    // ROOM ERROR
     socket.on("room:error", (data: { message: string }) => {
       setStatus(`Room error: ${data.message}`);
     });
 
+    // LEFT ROOM
     socket.on("room:left", () => {
-      setInRoom(false);
-      setParticipants([]);
-      setMessages([]);
-      setRaisedHands({});
-      setMyHandRaised(false);
+      resetMeetingState();
       setStatus("You left the meeting room");
     });
   };
@@ -179,6 +294,11 @@ export default function MeetingRoomPage() {
   const createRoom = () => {
     if (!connected || !socketRef.current) {
       setStatus("Connect and authenticate first");
+      return;
+    }
+
+    if (inRoom) {
+      setStatus("Leave your current meeting first");
       return;
     }
 
@@ -193,6 +313,11 @@ export default function MeetingRoomPage() {
 
     if (!roomId.trim()) {
       setStatus("Enter a Room ID");
+      return;
+    }
+
+    if (inRoom) {
+      setStatus("Leave your current meeting first");
       return;
     }
 
@@ -218,7 +343,7 @@ export default function MeetingRoomPage() {
     setMessages((prev) => [
       ...prev,
       {
-        userId: 0,
+        userId: myUserId ?? 0,
         socketId: socket.id || "",
         message: text,
         timestamp: new Date().toISOString(),
@@ -226,7 +351,7 @@ export default function MeetingRoomPage() {
     ]);
 
     socket.emit("room:message", {
-      roomId,
+      roomId: roomIdRef.current,
       message: text,
     });
 
@@ -241,16 +366,47 @@ export default function MeetingRoomPage() {
     const raised = !myHandRaised;
     setMyHandRaised(raised);
 
-    if (socketRef.current.id) {
+    const socketId = socketRef.current.id;
+
+    if (socketId) {
       setRaisedHands((prev) => ({
         ...prev,
-        [socketRef.current!.id!]: raised,
+        [socketId]: raised,
       }));
     }
 
     socketRef.current.emit("room:raise-hand", {
-      roomId,
+      roomId: roomIdRef.current,
       raised,
+    });
+  };
+
+  const toggleMeetingLock = () => {
+    if (!inRoom || !isHost || !socketRef.current) {
+      setStatus("Only the host can lock or unlock the meeting");
+      return;
+    }
+
+    socketRef.current.emit("room:lock", {
+      roomId: roomIdRef.current,
+      locked: !locked,
+    });
+  };
+
+  const removeParticipant = (targetSocketId: string) => {
+    if (!inRoom || !isHost || !socketRef.current) {
+      setStatus("Only the host can remove participants");
+      return;
+    }
+
+    if (targetSocketId === socketRef.current.id) {
+      setStatus("You cannot remove yourself");
+      return;
+    }
+
+    socketRef.current.emit("room:remove-participant", {
+      roomId: roomIdRef.current,
+      targetSocketId,
     });
   };
 
@@ -260,7 +416,7 @@ export default function MeetingRoomPage() {
     }
 
     socketRef.current.emit("room:leave", {
-      roomId,
+      roomId: roomIdRef.current,
     });
   };
 
@@ -269,11 +425,10 @@ export default function MeetingRoomPage() {
     socketRef.current = null;
 
     setConnected(false);
-    setInRoom(false);
-    setParticipants([]);
-    setMessages([]);
-    setRaisedHands({});
-    setMyHandRaised(false);
+    setMyUserId(null);
+    myUserIdRef.current = null;
+    resetMeetingState();
+
     setStatus("Disconnected");
   };
 
@@ -286,7 +441,9 @@ export default function MeetingRoomPage() {
 
         <h2 className="mb-5 text-xl font-semibold">Meeting Room</h2>
 
-        <label className="mb-2 block font-medium">Login Token</label>
+        <label className="mb-2 block font-medium">
+          Login Token
+        </label>
 
         <input
           type="password"
@@ -316,16 +473,37 @@ export default function MeetingRoomPage() {
 
         <div className="mb-5 rounded-lg border bg-gray-50 p-4">
           <p className="font-semibold">Status: {status}</p>
+
+          <p className="text-sm text-gray-600">
+            User ID: {myUserId ?? "Not authenticated"}
+          </p>
+
           <p className="text-sm text-gray-600">
             Connection: {connected ? "Connected" : "Disconnected"}
           </p>
+
           <p className="text-sm text-gray-600">
             Meeting: {inRoom ? "Active" : "Not joined"}
           </p>
+
+          {inRoom && (
+            <>
+              <p className="text-sm text-gray-600">
+                Host: User {hostUserId ?? "Unknown"}
+                {isHost ? " (You)" : ""}
+              </p>
+
+              <p className="text-sm font-medium">
+                Meeting Status: {locked ? "Locked 🔒" : "Unlocked 🔓"}
+              </p>
+            </>
+          )}
         </div>
 
         <div className="mb-6 rounded-lg border p-4">
-          <h3 className="mb-3 text-lg font-semibold">Create or Join Meeting</h3>
+          <h3 className="mb-3 text-lg font-semibold">
+            Create or Join Meeting
+          </h3>
 
           <button
             onClick={createRoom}
@@ -335,7 +513,9 @@ export default function MeetingRoomPage() {
             Create Room
           </button>
 
-          <label className="mb-2 block font-medium">Room ID</label>
+          <label className="mb-2 block font-medium">
+            Room ID
+          </label>
 
           <input
             value={roomId}
@@ -356,32 +536,78 @@ export default function MeetingRoomPage() {
         {inRoom && (
           <>
             <div className="mb-6 rounded-lg border p-4">
-              <h3 className="mb-3 text-lg font-semibold">
-                Participants ({participants.length})
-              </h3>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-lg font-semibold">
+                  Participants ({participants.length})
+                </h3>
 
-              {participants.map((participant) => (
-                <div
-                  key={participant.socketId}
-                  className="mb-2 flex items-center justify-between rounded-lg bg-gray-50 p-3"
-                >
-                  <span>
-                    {participant.socketId === socketRef.current?.id
-                      ? "You"
-                      : `User ${participant.userId || "Participant"}`}
-                  </span>
+                {isHost && (
+                  <button
+                    onClick={toggleMeetingLock}
+                    className={`rounded-lg px-4 py-2 text-white ${
+                      locked ? "bg-green-600" : "bg-orange-600"
+                    }`}
+                  >
+                    {locked ? "Unlock Meeting 🔓" : "Lock Meeting 🔒"}
+                  </button>
+                )}
+              </div>
 
-                  <span className="text-sm">
-                    {raisedHands[participant.socketId]
-                      ? "✋ Hand Raised"
-                      : "🟢 Connected"}
-                  </span>
-                </div>
-              ))}
+              {participants.map((participant) => {
+                const participantIsHost =
+                  participant.userId === hostUserId;
+
+                const participantIsMe =
+                  participant.socketId === socketRef.current?.id;
+
+                return (
+                  <div
+                    key={participant.socketId}
+                    className="mb-2 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-gray-50 p-3"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>
+                        {participantIsMe
+                          ? "You"
+                          : `User ${participant.userId || "Participant"}`}
+                      </span>
+
+                      {participantIsHost && (
+                        <span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-700">
+                          Host
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm">
+                        {raisedHands[participant.socketId]
+                          ? "✋ Hand Raised"
+                          : "🟢 Connected"}
+                      </span>
+
+                      {isHost &&
+                        !participantIsMe &&
+                        !participantIsHost && (
+                          <button
+                            onClick={() =>
+                              removeParticipant(participant.socketId)
+                            }
+                            className="rounded-lg bg-red-600 px-3 py-1 text-sm text-white"
+                          >
+                            Remove
+                          </button>
+                        )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="mb-6 rounded-lg border p-4">
-              <h3 className="mb-3 text-lg font-semibold">Meeting Chat</h3>
+              <h3 className="mb-3 text-lg font-semibold">
+                Meeting Chat
+              </h3>
 
               <div className="mb-4 h-64 overflow-y-auto rounded-lg bg-gray-50 p-3">
                 {messages.length === 0 && (
