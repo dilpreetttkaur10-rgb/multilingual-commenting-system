@@ -2,6 +2,9 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import { createServer } from "http";
+
+import { createSocketServer } from "./socket/socketServer";
 
 import authRoutes from "./routes/authRoutes";
 import commentRoutes from "./routes/commentRoutes";
@@ -14,6 +17,7 @@ import invoiceRoutes from "./routes/invoiceRoutes";
 dotenv.config();
 
 const app = express();
+const httpServer = createServer(app);
 
 const PORT = process.env.PORT || 5000;
 
@@ -31,21 +35,15 @@ app.use(
 app.use(express.json());
 
 // ==========================================
-// ROUTES
+// EXISTING API ROUTES
 // ==========================================
 
 app.use("/api/auth", authRoutes);
-
 app.use("/api/comments", commentRoutes);
-
 app.use("/api/reports", reportRoutes);
-
 app.use("/api/downloads", downloadRoutes);
-
 app.use("/api/subscriptions", subscriptionRoutes);
-
 app.use("/api/payments", paymentRoutes);
-
 app.use("/api/invoices", invoiceRoutes);
 
 // ==========================================
@@ -71,11 +69,16 @@ app.get("/api/health", (_req, res) => {
 });
 
 // ==========================================
+// SOCKET.IO SIGNALING SERVER
+// ==========================================
+
+createSocketServer(httpServer);
+
+// ==========================================
 // START SERVER
 // ==========================================
 
-app.listen(PORT, () => {
-  console.log(
-    `Backend running on http://localhost:${PORT}`
-  );
+httpServer.listen(PORT, () => {
+  console.log(`Backend running on http://localhost:${PORT}`);
+  console.log("Socket.IO signaling server initialized");
 });
