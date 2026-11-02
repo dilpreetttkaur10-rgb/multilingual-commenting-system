@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -23,11 +24,19 @@ export default function VideoCallPage() {
   const [token, setToken] = useState("");
   const [targetUserId, setTargetUserId] = useState("");
   const [connected, setConnected] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const [connectionQuality, setConnectionQuality] = useState(
+    "Waiting for connection",
+  );
+
   const [status, setStatus] = useState(
     "Enter your login token to connect.",
   );
+
   const [incomingCall, setIncomingCall] =
     useState<CallEvent | null>(null);
+
   const [inCall, setInCall] = useState(false);
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
@@ -37,9 +46,12 @@ export default function VideoCallPage() {
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
+
   const callIdRef = useRef<string | null>(null);
   const roleRef = useRef<"caller" | "callee" | null>(null);
+
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -50,11 +62,13 @@ export default function VideoCallPage() {
     screenStreamRef.current?.getTracks().forEach((track) => {
       track.stop();
     });
+
     screenStreamRef.current = null;
 
     localStreamRef.current?.getTracks().forEach((track) => {
       track.stop();
     });
+
     localStreamRef.current = null;
 
     if (localVideoRef.current) {
@@ -123,6 +137,7 @@ export default function VideoCallPage() {
 
       if (remoteVideoRef.current && remoteStream) {
         remoteVideoRef.current.srcObject = remoteStream;
+
         void remoteVideoRef.current.play().catch(() => {});
       }
     };
@@ -137,16 +152,52 @@ export default function VideoCallPage() {
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "connected") {
-        setStatus("Video call connected.");
-      } else if (pc.connectionState === "connecting") {
-        setStatus("Connecting audio and video...");
-      } else if (
-        pc.connectionState === "failed" ||
-        pc.connectionState === "disconnected"
-      ) {
+      switch (pc.connectionState) {
+        case "connected":
+          setConnectionQuality("Video connection stable");
+          setStatus("Video call connected.");
+          break;
+
+        case "connecting":
+          setConnectionQuality("Connecting audio and video");
+          setStatus("Connecting audio and video...");
+          break;
+
+        case "disconnected":
+          setConnectionQuality("Connection interrupted");
+          setStatus(
+            "Video connection interrupted. Waiting for network recovery...",
+          );
+          break;
+
+        case "failed":
+          setConnectionQuality("Connection failed");
+          setStatus(
+            "WebRTC connection failed. End the call and try again. A TURN server may be required.",
+          );
+          break;
+
+        case "closed":
+          setConnectionQuality("Call closed");
+          setStatus("Video connection closed.");
+          break;
+
+        default:
+          setConnectionQuality(pc.connectionState);
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === "checking") {
+        setConnectionQuality("Checking network connection...");
+      } else if (pc.iceConnectionState === "connected") {
+        setConnectionQuality("ICE connection established");
+      } else if (pc.iceConnectionState === "disconnected") {
+        setConnectionQuality("ICE connection interrupted");
+      } else if (pc.iceConnectionState === "failed") {
+        setConnectionQuality("ICE connection failed");
         setStatus(
-          `Connection ${pc.connectionState}. Check your network.`,
+          "Network connection failed. Try ending and restarting the call.",
         );
       }
     };
@@ -157,14 +208,18 @@ export default function VideoCallPage() {
   const flushPendingCandidates = useCallback(async () => {
     const pc = peerRef.current;
 
-    if (!pc?.remoteDescription) return;
+    if (!pc?.remoteDescription) {
+      return;
+    }
 
     const candidates = [...pendingCandidatesRef.current];
     pendingCandidatesRef.current = [];
 
     for (const candidate of candidates) {
       try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        await pc.addIceCandidate(
+          new RTCIceCandidate(candidate),
+        );
       } catch (error) {
         console.error("Could not add ICE candidate:", error);
       }
@@ -186,37 +241,114 @@ export default function VideoCallPage() {
 
     const socket = io(SOCKET_URL, {
       auth: { token: token.trim() },
+
       transports: ["websocket", "polling"],
+
       reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 10000,
     });
 
     socketRef.current = socket;
+
     setStatus("Connecting to the signaling server...");
+    setConnectionQuality("Connecting...");
 
     socket.on("connect", () => {
       setConnected(true);
-      setStatus("Connected. Waiting for authentication...");
+      setReconnecting(false);
+      setReconnectAttempts(0);
+
+      setConnectionQuality("Signaling server connected");
+
+      setStatus(
+        "Connected. Waiting for authentication confirmation...",
+      );
     });
 
     socket.on("socket:ready", () => {
       setConnected(true);
-      setStatus("Authenticated. You can now make calls.");
+      setReconnecting(false);
+
+      setConnectionQuality("Authenticated");
+
+      setStatus(
+        "Authenticated. You can now make calls.",
+      );
+    });
+
+    socket.on("reconnect_attempt", (attempt: number) => {
+      setReconnecting(true);
+      setReconnectAttempts(attempt);
+
+      setConnectionQuality("Reconnecting...");
+
+      setStatus(
+        `Network interruption. Reconnecting... Attempt ${attempt}`,
+      );
+    });
+
+    socket.on("reconnect", () => {
+      setConnected(true);
+      setReconnecting(false);
+
+      setConnectionQuality("Signaling server reconnected");
+
+      setStatus(
+        "Signaling server reconnected. Check your video call status.",
+      );
+    });
+
+    socket.on("reconnect_error", (error) => {
+      setReconnecting(true);
+
+      setConnectionQuality("Reconnection failed");
+
+      setStatus(
+        `Reconnection error: ${error.message}`,
+      );
     });
 
     socket.on("connect_error", (error) => {
       setConnected(false);
-      setStatus(`Connection failed: ${error.message}`);
+
+      setConnectionQuality("Connection failed");
+
+      setStatus(
+        `Connection failed: ${error.message}`,
+      );
     });
 
-    socket.on("disconnect", () => {
+    socket.on("disconnect", (reason) => {
       setConnected(false);
-      setStatus("Disconnected from signaling server.");
+
+      if (reason === "io server disconnect") {
+        setReconnecting(false);
+
+        setConnectionQuality("Disconnected by server");
+
+        setStatus(
+          "Server disconnected. Click Connect to reconnect.",
+        );
+      } else {
+        setReconnecting(true);
+
+        setConnectionQuality("Connection lost");
+
+        setStatus(
+          "Connection lost. Attempting to reconnect...",
+        );
+      }
     });
 
     socket.on("call:incoming", (data: CallEvent) => {
       callIdRef.current = data.callId;
       roleRef.current = "callee";
+
       setIncomingCall(data);
+
       setStatus(
         `Incoming call from user ${data.callerId ?? "unknown"}.`,
       );
@@ -225,15 +357,22 @@ export default function VideoCallPage() {
     socket.on("call:outgoing", (data: CallEvent) => {
       callIdRef.current = data.callId;
       roleRef.current = "caller";
-      setStatus("Calling user. Waiting for acceptance...");
+
+      setStatus(
+        "Calling user. Waiting for acceptance...",
+      );
     });
 
     socket.on("call:accepted", async (data: CallEvent) => {
       callIdRef.current = data.callId;
+
       setInCall(true);
 
       if (roleRef.current !== "caller") {
-        setStatus("Call accepted. Waiting for the caller's offer...");
+        setStatus(
+          "Call accepted. Waiting for the caller's offer...",
+        );
+
         return;
       }
 
@@ -241,7 +380,9 @@ export default function VideoCallPage() {
         await getLocalMedia();
 
         const pc = createPeerConnection(data.callId);
+
         const offer = await pc.createOffer();
+
         await pc.setLocalDescription(offer);
 
         socket.emit("webrtc:offer", {
@@ -257,23 +398,38 @@ export default function VideoCallPage() {
             : "Could not start the call.",
         );
 
-        socket.emit("call:end", { callId: data.callId });
+        socket.emit("call:end", {
+          callId: data.callId,
+        });
+
         stopMedia();
       }
     });
 
     socket.on("call:rejected", () => {
       stopMedia();
-      setStatus("The other user rejected your call.");
+
+      setConnectionQuality("Call rejected");
+
+      setStatus(
+        "The other user rejected your call.",
+      );
     });
 
     socket.on("call:ended", () => {
       stopMedia();
-      setStatus("The other user ended the call.");
+
+      setConnectionQuality("Call ended");
+
+      setStatus(
+        "The other user ended the call.",
+      );
     });
 
     socket.on("call:error", (data: { message?: string }) => {
-      setStatus(data.message || "A calling error occurred.");
+      setStatus(
+        data.message || "A calling error occurred.",
+      );
     });
 
     socket.on(
@@ -296,6 +452,7 @@ export default function VideoCallPage() {
           await flushPendingCandidates();
 
           const answer = await pc.createAnswer();
+
           await pc.setLocalDescription(answer);
 
           socket.emit("webrtc:answer", {
@@ -304,7 +461,10 @@ export default function VideoCallPage() {
           });
 
           setInCall(true);
-          setStatus("Answer sent. Connecting audio and video...");
+
+          setStatus(
+            "Answer sent. Connecting audio and video...",
+          );
         } catch (error) {
           setStatus(
             error instanceof Error
@@ -322,12 +482,17 @@ export default function VideoCallPage() {
         answer: RTCSessionDescriptionInit;
       }) => {
         try {
-          if (data.callId !== callIdRef.current) return;
+          if (data.callId !== callIdRef.current) {
+            return;
+          }
 
           const pc = peerRef.current;
 
           if (!pc) {
-            setStatus("Call connection was not initialized.");
+            setStatus(
+              "Call connection was not initialized.",
+            );
+
             return;
           }
 
@@ -337,7 +502,9 @@ export default function VideoCallPage() {
 
           await flushPendingCandidates();
 
-          setStatus("Answer received. Establishing video connection...");
+          setStatus(
+            "Answer received. Establishing video connection...",
+          );
         } catch (error) {
           setStatus(
             error instanceof Error
@@ -354,12 +521,17 @@ export default function VideoCallPage() {
         callId: string;
         candidate: RTCIceCandidateInit;
       }) => {
-        if (data.callId !== callIdRef.current) return;
+        if (data.callId !== callIdRef.current) {
+          return;
+        }
 
         const pc = peerRef.current;
 
         if (!pc?.remoteDescription) {
-          pendingCandidatesRef.current.push(data.candidate);
+          pendingCandidatesRef.current.push(
+            data.candidate,
+          );
+
           return;
         }
 
@@ -368,7 +540,10 @@ export default function VideoCallPage() {
             new RTCIceCandidate(data.candidate),
           );
         } catch (error) {
-          console.error("Could not add ICE candidate:", error);
+          console.error(
+            "Could not add ICE candidate:",
+            error,
+          );
         }
       },
     );
@@ -389,11 +564,17 @@ export default function VideoCallPage() {
     }
 
     if (!socketRef.current?.connected) {
-      setStatus("Connect to the signaling server first.");
+      setStatus(
+        "Connect to the signaling server first.",
+      );
+
       return;
     }
 
-    socketRef.current.emit("call:invite", { targetUserId: id });
+    socketRef.current.emit("call:invite", {
+      targetUserId: id,
+    });
+
     setStatus("Sending call invitation...");
   }, [targetUserId]);
 
@@ -401,17 +582,25 @@ export default function VideoCallPage() {
     const call = incomingCall;
     const socket = socketRef.current;
 
-    if (!call || !socket) return;
+    if (!call || !socket) {
+      return;
+    }
 
     try {
       await getLocalMedia();
+
       createPeerConnection(call.callId);
 
-      socket.emit("call:accept", { callId: call.callId });
+      socket.emit("call:accept", {
+        callId: call.callId,
+      });
 
       setIncomingCall(null);
       setInCall(true);
-      setStatus("Call accepted. Waiting for video...");
+
+      setStatus(
+        "Call accepted. Waiting for video...",
+      );
     } catch (error) {
       setStatus(
         error instanceof Error
@@ -419,7 +608,10 @@ export default function VideoCallPage() {
           : "Could not access camera.",
       );
 
-      socket.emit("call:reject", { callId: call.callId });
+      socket.emit("call:reject", {
+        callId: call.callId,
+      });
+
       stopMedia();
     }
   }, [
@@ -437,6 +629,9 @@ export default function VideoCallPage() {
     }
 
     stopMedia();
+
+    setConnectionQuality("Call rejected");
+
     setStatus("Call rejected.");
   }, [incomingCall, stopMedia]);
 
@@ -444,16 +639,24 @@ export default function VideoCallPage() {
     const callId = callIdRef.current;
 
     if (callId) {
-      socketRef.current?.emit("call:end", { callId });
+      socketRef.current?.emit("call:end", {
+        callId,
+      });
     }
 
     stopMedia();
+
+    setConnectionQuality("Call ended");
+
     setStatus("Call ended.");
   }, [stopMedia]);
 
   const toggleMute = useCallback(() => {
     const stream = localStreamRef.current;
-    if (!stream) return;
+
+    if (!stream) {
+      return;
+    }
 
     const nextMuted = !muted;
 
@@ -466,7 +669,10 @@ export default function VideoCallPage() {
 
   const toggleCamera = useCallback(() => {
     const stream = localStreamRef.current;
-    if (!stream) return;
+
+    if (!stream) {
+      return;
+    }
 
     const nextOff = !cameraOff;
 
@@ -477,11 +683,61 @@ export default function VideoCallPage() {
     setCameraOff(nextOff);
   }, [cameraOff]);
 
+  const stopScreenShare = useCallback(async () => {
+    const pc = peerRef.current;
+    const cameraStream = localStreamRef.current;
+    const screenStream = screenStreamRef.current;
+
+    if (!screenStream) {
+      return;
+    }
+
+    const cameraTrack =
+      cameraStream?.getVideoTracks()[0];
+
+    const videoSender = pc?.getSenders().find(
+      (sender) => sender.track?.kind === "video",
+    );
+
+    try {
+      if (videoSender && cameraTrack) {
+        await videoSender.replaceTrack(cameraTrack);
+      }
+    } catch (error) {
+      console.error(
+        "Could not restore camera track:",
+        error,
+      );
+    }
+
+    screenStream.getTracks().forEach((track) => {
+      track.onended = null;
+      track.stop();
+    });
+
+    screenStreamRef.current = null;
+
+    if (localVideoRef.current && cameraStream) {
+      localVideoRef.current.srcObject = cameraStream;
+
+      await localVideoRef.current.play().catch(() => {});
+    }
+
+    setScreenSharing(false);
+
+    setStatus(
+      "Screen sharing stopped. Camera restored.",
+    );
+  }, []);
+
   const startScreenShare = useCallback(async () => {
     const pc = peerRef.current;
 
     if (!inCall || !pc) {
-      setStatus("Join a video call before sharing your screen.");
+      setStatus(
+        "Join a video call before sharing your screen.",
+      );
+
       return;
     }
 
@@ -489,6 +745,7 @@ export default function VideoCallPage() {
       setStatus(
         "Screen sharing is unavailable. Use a supported browser over localhost or HTTPS.",
       );
+
       return;
     }
 
@@ -499,27 +756,38 @@ export default function VideoCallPage() {
           audio: false,
         });
 
-      const screenTrack = screenStream.getVideoTracks()[0];
+      const screenTrack =
+        screenStream.getVideoTracks()[0];
 
       const videoSender = pc.getSenders().find(
         (sender) => sender.track?.kind === "video",
       );
 
       if (!screenTrack || !videoSender) {
-        screenStream.getTracks().forEach((track) => track.stop());
-        setStatus("Could not find the video sender for screen sharing.");
+        screenStream.getTracks().forEach((track) => {
+          track.stop();
+        });
+
+        setStatus(
+          "Could not find the video sender for screen sharing.",
+        );
+
         return;
       }
 
       await videoSender.replaceTrack(screenTrack);
+
       screenStreamRef.current = screenStream;
 
       if (localVideoRef.current) {
-        localVideoRef.current.srcObject = screenStream;
+        localVideoRef.current.srcObject =
+          screenStream;
+
         await localVideoRef.current.play().catch(() => {});
       }
 
       setScreenSharing(true);
+
       setStatus("You are sharing your screen.");
 
       screenTrack.onended = () => {
@@ -532,44 +800,7 @@ export default function VideoCallPage() {
           : "Screen sharing was cancelled or failed.",
       );
     }
-  }, [inCall]);
-
-  const stopScreenShare = useCallback(async () => {
-    const pc = peerRef.current;
-    const cameraStream = localStreamRef.current;
-    const screenStream = screenStreamRef.current;
-
-    if (!screenStream) return;
-
-    const cameraTrack = cameraStream?.getVideoTracks()[0];
-
-    const videoSender = pc?.getSenders().find(
-      (sender) => sender.track?.kind === "video",
-    );
-
-    try {
-      if (videoSender && cameraTrack) {
-        await videoSender.replaceTrack(cameraTrack);
-      }
-    } catch (error) {
-      console.error("Could not restore camera track:", error);
-    }
-
-    screenStream.getTracks().forEach((track) => {
-      track.onended = null;
-      track.stop();
-    });
-
-    screenStreamRef.current = null;
-
-    if (localVideoRef.current && cameraStream) {
-      localVideoRef.current.srcObject = cameraStream;
-      await localVideoRef.current.play().catch(() => {});
-    }
-
-    setScreenSharing(false);
-    setStatus("Screen sharing stopped. Camera restored.");
-  }, []);
+  }, [inCall, stopScreenShare]);
 
   const disconnectSocket = useCallback(() => {
     if (callIdRef.current) {
@@ -579,25 +810,36 @@ export default function VideoCallPage() {
     }
 
     stopMedia();
+
     socketRef.current?.disconnect();
     socketRef.current = null;
 
     setConnected(false);
+    setReconnecting(false);
+    setReconnectAttempts(0);
+
+    setConnectionQuality("Disconnected");
+
     setStatus("Disconnected.");
   }, [stopMedia]);
 
   useEffect(() => {
     return () => {
       socketRef.current?.disconnect();
+
       peerRef.current?.close();
 
-      screenStreamRef.current?.getTracks().forEach((track) => {
-        track.stop();
-      });
+      screenStreamRef.current?.getTracks().forEach(
+        (track) => {
+          track.stop();
+        },
+      );
 
-      localStreamRef.current?.getTracks().forEach((track) => {
-        track.stop();
-      });
+      localStreamRef.current?.getTracks().forEach(
+        (track) => {
+          track.stop();
+        },
+      );
     };
   }, []);
 
@@ -614,7 +856,7 @@ export default function VideoCallPage() {
           </h1>
 
           <p className="mt-2 text-slate-400">
-            Day 57 · WebRTC + Socket.IO
+            Day 60 · Reconnection and Network Failure Handling
           </p>
         </header>
 
@@ -629,7 +871,9 @@ export default function VideoCallPage() {
           <textarea
             id="token"
             value={token}
-            onChange={(event) => setToken(event.target.value)}
+            onChange={(event) =>
+              setToken(event.target.value)
+            }
             placeholder="Paste your JWT login token here"
             rows={3}
             autoComplete="off"
@@ -655,7 +899,11 @@ export default function VideoCallPage() {
             </button>
 
             <span className="self-center text-sm text-slate-400">
-              {connected ? "Connected" : "Not connected"}
+              {connected
+                ? "Connected"
+                : reconnecting
+                  ? "Reconnecting..."
+                  : "Not connected"}
             </span>
           </div>
         </section>
@@ -683,7 +931,11 @@ export default function VideoCallPage() {
 
             <button
               onClick={startCall}
-              disabled={!connected || inCall || !!incomingCall}
+              disabled={
+                !connected ||
+                inCall ||
+                !!incomingCall
+              }
               className="rounded-xl bg-emerald-600 px-5 py-3 font-semibold disabled:opacity-50"
             >
               Call user
@@ -693,7 +945,9 @@ export default function VideoCallPage() {
 
         {incomingCall && (
           <section className="mb-6 rounded-2xl border border-emerald-700 bg-emerald-950/50 p-5">
-            <h2 className="text-lg font-bold">Incoming call</h2>
+            <h2 className="text-lg font-bold">
+              Incoming call
+            </h2>
 
             <p className="mt-1 text-slate-300">
               User {incomingCall.callerId ?? "unknown"} is calling you.
@@ -747,11 +1001,28 @@ export default function VideoCallPage() {
         </section>
 
         <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-5">
-          <h2 className="font-semibold">Call controls</h2>
+          <h2 className="font-semibold">
+            Call controls
+          </h2>
 
-          <p className="mt-2 text-sm text-slate-300" role="status">
+          <p
+            className="mt-2 text-sm text-slate-300"
+            role="status"
+          >
             {status}
           </p>
+
+          <div className="mt-3 rounded-xl border border-slate-700 bg-slate-950 p-3">
+            <p className="text-sm font-semibold">
+              Connection: {connectionQuality}
+            </p>
+
+            {reconnecting && (
+              <p className="mt-1 text-sm text-yellow-400">
+                Reconnecting... Attempt {reconnectAttempts}
+              </p>
+            )}
+          </div>
 
           <div className="mt-4 flex flex-wrap gap-3">
             <button
@@ -759,7 +1030,9 @@ export default function VideoCallPage() {
               disabled={!inCall}
               className="rounded-xl border border-slate-700 px-4 py-3 disabled:opacity-50"
             >
-              {muted ? "Unmute microphone" : "Mute microphone"}
+              {muted
+                ? "Unmute microphone"
+                : "Mute microphone"}
             </button>
 
             <button
@@ -767,12 +1040,16 @@ export default function VideoCallPage() {
               disabled={!inCall}
               className="rounded-xl border border-slate-700 px-4 py-3 disabled:opacity-50"
             >
-              {cameraOff ? "Turn camera on" : "Turn camera off"}
+              {cameraOff
+                ? "Turn camera on"
+                : "Turn camera off"}
             </button>
 
             <button
               onClick={
-                screenSharing ? stopScreenShare : startScreenShare
+                screenSharing
+                  ? stopScreenShare
+                  : startScreenShare
               }
               disabled={!inCall}
               className="rounded-xl border border-slate-700 px-4 py-3 disabled:opacity-50"
@@ -793,9 +1070,10 @@ export default function VideoCallPage() {
         </section>
 
         <p className="mt-6 text-sm leading-6 text-slate-500">
-          Camera and microphone permissions are required. Test with two
-          different accounts in separate browser sessions. Some networks
-          require a TURN server in addition to STUN.
+          Camera and microphone permissions are required.
+          Test with two different accounts in separate
+          browser sessions. Some networks require a TURN
+          server in addition to STUN.
         </p>
       </div>
     </main>
