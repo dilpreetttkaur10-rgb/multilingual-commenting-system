@@ -1,3 +1,4 @@
+﻿
 import { Response } from "express";
 import { AuthRequest } from "../middleware/authMiddleware";
 import { prisma } from "../utils/prisma";
@@ -27,10 +28,7 @@ export const getSubscriptionPlans = async (
 ) => {
   try {
     const plans = await prisma.subscriptionPlan.findMany({
-      orderBy: {
-        price: "asc",
-      },
-
+      orderBy: { price: "asc" },
       select: {
         id: true,
         name: true,
@@ -53,7 +51,6 @@ export const getSubscriptionPlans = async (
       name: plan.name,
       price: plan.price,
       durationDays: plan.durationDays,
-
       validity:
         plan.durationDays === 30
           ? "Monthly"
@@ -62,12 +59,10 @@ export const getSubscriptionPlans = async (
           : plan.durationDays === 365
           ? "Yearly"
           : `${plan.durationDays} days`,
-
       downloads: {
         limit: plan.downloadLimit,
         maxFileSizeMB: plan.maxFileSizeMB,
       },
-
       features: {
         premiumVideoAccess: plan.premiumVideoAccess,
         streamingQuality: plan.streamingQuality,
@@ -122,11 +117,9 @@ export const getCurrentSubscription = async (
           userId,
           isActive: true,
         },
-
         include: {
           plan: true,
         },
-
         orderBy: {
           endDate: "desc",
         },
@@ -141,19 +134,10 @@ export const getCurrentSubscription = async (
 
     const now = new Date();
 
-    // ==========================================
-    // CHECK EXPIRY
-    // ==========================================
-
     if (subscription.endDate <= now) {
       await prisma.userSubscription.update({
-        where: {
-          id: subscription.id,
-        },
-
-        data: {
-          isActive: false,
-        },
+        where: { id: subscription.id },
+        data: { isActive: false },
       });
 
       return res.status(403).json({
@@ -162,22 +146,12 @@ export const getCurrentSubscription = async (
       });
     }
 
-    // ==========================================
-    // CALCULATE REMAINING DAYS
-    // ==========================================
-
     const millisecondsRemaining =
-      subscription.endDate.getTime() -
-      now.getTime();
+      subscription.endDate.getTime() - now.getTime();
 
     const remainingDays = Math.ceil(
-      millisecondsRemaining /
-        (1000 * 60 * 60 * 24)
+      millisecondsRemaining / (1000 * 60 * 60 * 24)
     );
-
-    // ==========================================
-    // CALCULATE REMAINING DOWNLOADS
-    // ==========================================
 
     const downloadsRemaining = Math.max(
       subscription.plan.downloadLimit -
@@ -185,71 +159,49 @@ export const getCurrentSubscription = async (
       0
     );
 
-    // ==========================================
-    // DASHBOARD RESPONSE
-    // ==========================================
-
     return res.status(200).json({
       success: true,
-      message:
-        "Current subscription retrieved successfully",
-
+      message: "Current subscription retrieved successfully",
       subscription: {
         id: subscription.id,
-
         plan: {
           id: subscription.plan.id,
           name: subscription.plan.name,
           price: subscription.plan.price,
         },
-
         startDate: subscription.startDate,
-
         endDate: subscription.endDate,
-
         remainingDays,
-
         nextRenewalDate: subscription.endDate,
-
         isActive: subscription.isActive,
-
+        cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+        scheduledPlanId: subscription.scheduledPlanId,
         downloads: {
           limit: subscription.plan.downloadLimit,
           used: subscription.downloadsUsed,
           remaining: downloadsRemaining,
-          maxFileSizeMB:
-            subscription.plan.maxFileSizeMB,
+          maxFileSizeMB: subscription.plan.maxFileSizeMB,
         },
-
         features: {
           premiumVideoAccess:
             subscription.plan.premiumVideoAccess,
-
           streamingQuality:
             subscription.plan.streamingQuality,
-
           watchTimeMinutes:
             subscription.plan.watchTimeMinutes,
-
           offlineDownloads:
             subscription.plan.offlineDownloads,
-
           adFreeViewing:
             subscription.plan.adFreeViewing,
-
           priorityContent:
             subscription.plan.priorityContent,
-
           exclusiveCourses:
             subscription.plan.exclusiveCourses,
         },
       },
     });
   } catch (error) {
-    console.error(
-      "Get current subscription error:",
-      error
-    );
+    console.error("Get current subscription error:", error);
 
     return res.status(500).json({
       success: false,
@@ -276,34 +228,18 @@ export const upgradeSubscription = async (
       });
     }
 
-    const { planId } = req.body;
+    const numericPlanId = Number(req.body.planId);
 
-    if (!planId) {
-      return res.status(400).json({
-        success: false,
-        message: "Plan ID is required",
-      });
-    }
-
-    const numericPlanId = Number(planId);
-
-    if (!Number.isInteger(numericPlanId)) {
+    if (!Number.isInteger(numericPlanId) || numericPlanId <= 0) {
       return res.status(400).json({
         success: false,
         message: "Invalid plan ID",
       });
     }
 
-    // ==========================================
-    // FIND TARGET PLAN
-    // ==========================================
-
-    const plan =
-      await prisma.subscriptionPlan.findUnique({
-        where: {
-          id: numericPlanId,
-        },
-      });
+    const plan = await prisma.subscriptionPlan.findUnique({
+      where: { id: numericPlanId },
+    });
 
     if (!plan) {
       return res.status(404).json({
@@ -312,181 +248,78 @@ export const upgradeSubscription = async (
       });
     }
 
-    if (plan.name === "FREE") {
+    if (plan.name.toUpperCase() === "FREE" || plan.price.toNumber() <= 0) {
       return res.status(400).json({
         success: false,
-        message:
-          "FREE plan cannot be selected for upgrade",
+        message: "A paid plan is required for upgrade",
       });
     }
 
-    // ==========================================
-    // FIND CURRENT SUBSCRIPTION
-    // ==========================================
+    const now = new Date();
 
     const currentSubscription =
       await prisma.userSubscription.findFirst({
         where: {
           userId,
           isActive: true,
+          endDate: { gt: now },
         },
-
-        include: {
-          plan: true,
-        },
-
-        orderBy: {
-          endDate: "desc",
-        },
+        include: { plan: true },
+        orderBy: { endDate: "desc" },
       });
 
-    // ==========================================
-    // CHECK UPGRADE ELIGIBILITY
-    // ==========================================
-
     if (currentSubscription) {
+      if (currentSubscription.cancelAtPeriodEnd) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Subscription is scheduled for cancellation. Upgrade is not allowed.",
+        });
+      }
+
+      if (currentSubscription.scheduledPlanId) {
+        return res.status(400).json({
+          success: false,
+          message: "A plan change is already scheduled.",
+        });
+      }
+
       const currentLevel = getPlanLevel(
         currentSubscription.plan.name
       );
 
-      const targetLevel = getPlanLevel(
-        plan.name
-      );
+      const targetLevel = getPlanLevel(plan.name);
 
-      if (targetLevel <= currentLevel) {
+      if (
+        currentLevel < 0 ||
+        targetLevel < 0 ||
+        targetLevel <= currentLevel
+      ) {
         return res.status(400).json({
           success: false,
-
           message:
-            "Selected plan is not an upgrade. Please choose a higher membership plan.",
-
-          currentPlan:
-            currentSubscription.plan.name,
-
+            "Selected plan is not a valid upgrade. Please choose a higher membership plan.",
+          currentPlan: currentSubscription.plan.name,
           requestedPlan: plan.name,
         });
       }
     }
 
-    // ==========================================
-    // DEACTIVATE CURRENT SUBSCRIPTION
-    // ==========================================
-
-    if (currentSubscription) {
-      await prisma.userSubscription.update({
-        where: {
-          id: currentSubscription.id,
-        },
-
-        data: {
-          isActive: false,
-        },
-      });
-    }
-
-    // ==========================================
-    // CREATE NEW SUBSCRIPTION
-    // ==========================================
-
-    const startDate = new Date();
-
-    const endDate = new Date(startDate);
-
-    endDate.setDate(
-      endDate.getDate() + plan.durationDays
-    );
-
-    const newSubscription =
-      await prisma.userSubscription.create({
-        data: {
-          userId,
-          planId: plan.id,
-          startDate,
-          endDate,
-          isActive: true,
-          downloadsUsed: 0,
-        },
-
-        include: {
-          plan: true,
-        },
-      });
-
-    // ==========================================
-    // RESPONSE
-    // ==========================================
-
-    return res.status(201).json({
+    return res.status(200).json({
       success: true,
-
+      paymentRequired: true,
       message:
-        "Subscription upgraded successfully",
-
-      subscription: {
-        id: newSubscription.id,
-
-        plan: {
-          id: newSubscription.plan.id,
-          name: newSubscription.plan.name,
-          price: newSubscription.plan.price,
-        },
-
-        startDate: newSubscription.startDate,
-
-        endDate: newSubscription.endDate,
-
-        isActive: newSubscription.isActive,
-
-        downloads: {
-          limit:
-            newSubscription.plan.downloadLimit,
-
-          used:
-            newSubscription.downloadsUsed,
-
-          remaining:
-            newSubscription.plan.downloadLimit,
-
-          maxFileSizeMB:
-            newSubscription.plan.maxFileSizeMB,
-        },
-
-        features: {
-          premiumVideoAccess:
-            newSubscription.plan
-              .premiumVideoAccess,
-
-          streamingQuality:
-            newSubscription.plan
-              .streamingQuality,
-
-          watchTimeMinutes:
-            newSubscription.plan
-              .watchTimeMinutes,
-
-          offlineDownloads:
-            newSubscription.plan
-              .offlineDownloads,
-
-          adFreeViewing:
-            newSubscription.plan
-              .adFreeViewing,
-
-          priorityContent:
-            newSubscription.plan
-              .priorityContent,
-
-          exclusiveCourses:
-            newSubscription.plan
-              .exclusiveCourses,
-        },
+        "Upgrade request validated. Complete payment to activate the selected plan.",
+      payment: {
+        userId,
+        planId: plan.id,
+        planName: plan.name,
+        amount: plan.price,
+        currency: "INR",
       },
     });
   } catch (error) {
-    console.error(
-      "Upgrade subscription error:",
-      error
-    );
+    console.error("Upgrade subscription error:", error);
 
     return res.status(500).json({
       success: false,
@@ -494,7 +327,6 @@ export const upgradeSubscription = async (
     });
   }
 };
-
 // ==========================================
 // DOWNGRADE SUBSCRIPTION
 // ==========================================
@@ -513,34 +345,21 @@ export const downgradeSubscription = async (
       });
     }
 
-    const { planId } = req.body;
+    const numericPlanId = Number(req.body.planId);
 
-    if (!planId) {
-      return res.status(400).json({
-        success: false,
-        message: "Plan ID is required",
-      });
-    }
-
-    const numericPlanId = Number(planId);
-
-    if (!Number.isInteger(numericPlanId)) {
+    if (
+      !Number.isInteger(numericPlanId) ||
+      numericPlanId <= 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "Invalid plan ID",
       });
     }
 
-    // ==========================================
-    // FIND TARGET PLAN
-    // ==========================================
-
-    const plan =
-      await prisma.subscriptionPlan.findUnique({
-        where: {
-          id: numericPlanId,
-        },
-      });
+    const plan = await prisma.subscriptionPlan.findUnique({
+      where: { id: numericPlanId },
+    });
 
     if (!plan) {
       return res.status(404).json({
@@ -549,21 +368,16 @@ export const downgradeSubscription = async (
       });
     }
 
-    // ==========================================
-    // FIND CURRENT SUBSCRIPTION
-    // ==========================================
-
     const currentSubscription =
       await prisma.userSubscription.findFirst({
         where: {
           userId,
           isActive: true,
+          endDate: { gt: new Date() },
         },
-
         include: {
           plan: true,
         },
-
         orderBy: {
           endDate: "desc",
         },
@@ -576,149 +390,84 @@ export const downgradeSubscription = async (
       });
     }
 
-    // ==========================================
-    // CHECK DOWNGRADE ELIGIBILITY
-    // ==========================================
-
     const currentLevel = getPlanLevel(
       currentSubscription.plan.name
     );
 
-    const targetLevel = getPlanLevel(
-      plan.name
-    );
+    const targetLevel = getPlanLevel(plan.name);
 
-    if (targetLevel >= currentLevel) {
+    if (
+      currentLevel < 0 ||
+      targetLevel < 0 ||
+      targetLevel >= currentLevel
+    ) {
       return res.status(400).json({
         success: false,
-
         message:
-          "Selected plan is not a downgrade. Please choose a lower membership plan.",
-
-        currentPlan:
-          currentSubscription.plan.name,
-
+          "Selected plan is not a valid downgrade. Please choose a lower membership plan.",
+        currentPlan: currentSubscription.plan.name,
         requestedPlan: plan.name,
       });
     }
 
-    // ==========================================
-    // DEACTIVATE CURRENT SUBSCRIPTION
-    // ==========================================
+    if (currentSubscription.cancelAtPeriodEnd) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Subscription is already scheduled for cancellation",
+      });
+    }
 
-    await prisma.userSubscription.update({
-      where: {
-        id: currentSubscription.id,
-      },
+    if (currentSubscription.scheduledPlanId) {
+      return res.status(400).json({
+        success: false,
+        message: "A plan change is already scheduled",
+      });
+    }
 
-      data: {
-        isActive: false,
-      },
-    });
-
-    // ==========================================
-    // CREATE DOWNGRADED SUBSCRIPTION
-    // ==========================================
-
-    const startDate = new Date();
-
-    const endDate = new Date(startDate);
-
-    endDate.setDate(
-      endDate.getDate() + plan.durationDays
-    );
-
-    const newSubscription =
-      await prisma.userSubscription.create({
-        data: {
-          userId,
-          planId: plan.id,
-          startDate,
-          endDate,
-          isActive: true,
-          downloadsUsed: 0,
+    const scheduledSubscription =
+      await prisma.userSubscription.update({
+        where: {
+          id: currentSubscription.id,
         },
-
+        data: {
+          scheduledPlanId: plan.id,
+        },
         include: {
           plan: true,
+          scheduledPlan: true,
         },
       });
 
-    // ==========================================
-    // RESPONSE
-    // ==========================================
-
-    return res.status(201).json({
+    return res.status(200).json({
       success: true,
-
       message:
-        "Subscription downgraded successfully",
-
+        "Downgrade scheduled successfully. Your current plan will remain active until its expiry date.",
       subscription: {
-        id: newSubscription.id,
-
-        plan: {
-          id: newSubscription.plan.id,
-          name: newSubscription.plan.name,
-          price: newSubscription.plan.price,
+        id: scheduledSubscription.id,
+        currentPlan: {
+          id: scheduledSubscription.plan.id,
+          name: scheduledSubscription.plan.name,
+          price: scheduledSubscription.plan.price,
         },
-
-        startDate: newSubscription.startDate,
-
-        endDate: newSubscription.endDate,
-
-        isActive: newSubscription.isActive,
-
-        downloads: {
-          limit:
-            newSubscription.plan.downloadLimit,
-
-          used:
-            newSubscription.downloadsUsed,
-
-          remaining:
-            newSubscription.plan.downloadLimit,
-
-          maxFileSizeMB:
-            newSubscription.plan.maxFileSizeMB,
-        },
-
-        features: {
-          premiumVideoAccess:
-            newSubscription.plan
-              .premiumVideoAccess,
-
-          streamingQuality:
-            newSubscription.plan
-              .streamingQuality,
-
-          watchTimeMinutes:
-            newSubscription.plan
-              .watchTimeMinutes,
-
-          offlineDownloads:
-            newSubscription.plan
-              .offlineDownloads,
-
-          adFreeViewing:
-            newSubscription.plan
-              .adFreeViewing,
-
-          priorityContent:
-            newSubscription.plan
-              .priorityContent,
-
-          exclusiveCourses:
-            newSubscription.plan
-              .exclusiveCourses,
-        },
+        scheduledPlan:
+          scheduledSubscription.scheduledPlan
+            ? {
+                id:
+                  scheduledSubscription.scheduledPlan.id,
+                name:
+                  scheduledSubscription.scheduledPlan.name,
+              }
+            : null,
+        startDate: scheduledSubscription.startDate,
+        endDate: scheduledSubscription.endDate,
+        isActive: scheduledSubscription.isActive,
+        scheduledPlanEffectiveDate:
+          scheduledSubscription.endDate,
       },
     });
   } catch (error) {
-    console.error(
-      "Downgrade subscription error:",
-      error
-    );
+    console.error("Downgrade subscription error:", error);
 
     return res.status(500).json({
       success: false,
@@ -745,21 +494,16 @@ export const cancelSubscription = async (
       });
     }
 
-    // ==========================================
-    // FIND ACTIVE SUBSCRIPTION
-    // ==========================================
-
     const currentSubscription =
       await prisma.userSubscription.findFirst({
         where: {
           userId,
           isActive: true,
+          endDate: { gt: new Date() },
         },
-
         include: {
           plan: true,
         },
-
         orderBy: {
           endDate: "desc",
         },
@@ -768,106 +512,75 @@ export const cancelSubscription = async (
     if (!currentSubscription) {
       return res.status(404).json({
         success: false,
-        message:
-          "No active subscription found to cancel",
+        message: "No active subscription found to cancel",
       });
     }
 
-    // ==========================================
-    // CHECK EXPIRY
-    // ==========================================
-
-    const now = new Date();
-
-    if (currentSubscription.endDate <= now) {
-      await prisma.userSubscription.update({
-        where: {
-          id: currentSubscription.id,
-        },
-
-        data: {
-          isActive: false,
-        },
-      });
-
+    if (currentSubscription.cancelAtPeriodEnd) {
       return res.status(400).json({
         success: false,
-        message: "Subscription has already expired",
+        message:
+          "Subscription is already scheduled for cancellation",
+        endDate: currentSubscription.endDate,
       });
     }
 
-    // ==========================================
-    // CANCEL SUBSCRIPTION
-    // ==========================================
+    if (currentSubscription.scheduledPlanId) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "A downgrade is already scheduled. Cancel the scheduled downgrade before cancelling the subscription.",
+      });
+    }
 
     const cancelledSubscription =
       await prisma.userSubscription.update({
         where: {
           id: currentSubscription.id,
         },
-
         data: {
-          isActive: false,
+          cancelAtPeriodEnd: true,
         },
-
         include: {
           plan: true,
         },
       });
 
-    // ==========================================
-    // RESPONSE
-    // ==========================================
-
     return res.status(200).json({
       success: true,
-
       message:
-        "Subscription cancelled successfully",
-
+        "Subscription cancellation scheduled successfully. Your current plan will remain active until its expiry date.",
       subscription: {
         id: cancelledSubscription.id,
-
         plan: {
           id: cancelledSubscription.plan.id,
           name: cancelledSubscription.plan.name,
           price: cancelledSubscription.plan.price,
         },
-
-        startDate:
-          cancelledSubscription.startDate,
-
-        endDate:
+        startDate: cancelledSubscription.startDate,
+        endDate: cancelledSubscription.endDate,
+        isActive: cancelledSubscription.isActive,
+        cancelAtPeriodEnd:
+          cancelledSubscription.cancelAtPeriodEnd,
+        cancellationEffectiveDate:
           cancelledSubscription.endDate,
-
-        isActive:
-          cancelledSubscription.isActive,
-
-        cancelledAt: new Date(),
-
         downloads: {
           limit:
             cancelledSubscription.plan.downloadLimit,
-
           used:
             cancelledSubscription.downloadsUsed,
-
           remaining: Math.max(
             cancelledSubscription.plan.downloadLimit -
               cancelledSubscription.downloadsUsed,
             0
           ),
-
           maxFileSizeMB:
             cancelledSubscription.plan.maxFileSizeMB,
         },
       },
     });
   } catch (error) {
-    console.error(
-      "Cancel subscription error:",
-      error
-    );
+    console.error("Cancel subscription error:", error);
 
     return res.status(500).json({
       success: false,
@@ -896,17 +609,9 @@ export const renewSubscription = async (
 
     const subscription =
       await prisma.userSubscription.findFirst({
-        where: {
-          userId,
-        },
-
-        include: {
-          plan: true,
-        },
-
-        orderBy: {
-          id: "desc",
-        },
+        where: { userId },
+        include: { plan: true },
+        orderBy: { id: "desc" },
       });
 
     if (!subscription) {
@@ -921,118 +626,38 @@ export const renewSubscription = async (
     if (subscription.endDate > now) {
       return res.status(400).json({
         success: false,
-
         message:
           "Subscription is still active and cannot be renewed yet",
-
         endDate: subscription.endDate,
       });
     }
 
-    const startDate = new Date();
-
-    const endDate = new Date(startDate);
-
-    endDate.setDate(
-      endDate.getDate() +
-        subscription.plan.durationDays
-    );
-
-    const renewedSubscription =
-      await prisma.userSubscription.update({
-        where: {
-          id: subscription.id,
-        },
-
-        data: {
-          startDate,
-          endDate,
-          isActive: true,
-          downloadsUsed: 0,
-        },
-
-        include: {
-          plan: true,
-        },
+    if (
+      subscription.plan.name.toUpperCase() === "FREE" ||
+      subscription.plan.price.toNumber() <= 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "The FREE plan does not require paid renewal",
       });
+    }
 
     return res.status(200).json({
       success: true,
-
+      paymentRequired: true,
       message:
-        "Subscription renewed successfully",
-
-      subscription: {
-        id: renewedSubscription.id,
-
-        plan: {
-          id: renewedSubscription.plan.id,
-          name: renewedSubscription.plan.name,
-          price: renewedSubscription.plan.price,
-        },
-
-        startDate:
-          renewedSubscription.startDate,
-
-        endDate:
-          renewedSubscription.endDate,
-
-        isActive:
-          renewedSubscription.isActive,
-
-        downloads: {
-          limit:
-            renewedSubscription.plan
-              .downloadLimit,
-
-          used:
-            renewedSubscription.downloadsUsed,
-
-          remaining:
-            renewedSubscription.plan
-              .downloadLimit,
-
-          maxFileSizeMB:
-            renewedSubscription.plan
-              .maxFileSizeMB,
-        },
-
-        features: {
-          premiumVideoAccess:
-            renewedSubscription.plan
-              .premiumVideoAccess,
-
-          streamingQuality:
-            renewedSubscription.plan
-              .streamingQuality,
-
-          watchTimeMinutes:
-            renewedSubscription.plan
-              .watchTimeMinutes,
-
-          offlineDownloads:
-            renewedSubscription.plan
-              .offlineDownloads,
-
-          adFreeViewing:
-            renewedSubscription.plan
-              .adFreeViewing,
-
-          priorityContent:
-            renewedSubscription.plan
-              .priorityContent,
-
-          exclusiveCourses:
-            renewedSubscription.plan
-              .exclusiveCourses,
-        },
+        "Renewal request validated. Complete payment to renew your subscription.",
+      payment: {
+        userId,
+        planId: subscription.plan.id,
+        planName: subscription.plan.name,
+        amount: subscription.plan.price,
+        currency: "INR",
+        renewalOfSubscriptionId: subscription.id,
       },
     });
   } catch (error) {
-    console.error(
-      "Renew subscription error:",
-      error
-    );
+    console.error("Renew subscription error:", error);
 
     return res.status(500).json({
       success: false,
@@ -1040,3 +665,4 @@ export const renewSubscription = async (
     });
   }
 };
+

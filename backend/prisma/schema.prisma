@@ -150,6 +150,8 @@ model SubscriptionPlan {
 
   subscriptions UserSubscription[]
   payments      Payment[]
+
+  scheduledFor UserSubscription[] @relation("ScheduledPlan")
 }
 
 // ==========================================
@@ -167,13 +169,20 @@ model UserSubscription {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  // DAY 61 SUBSCRIPTION SCHEDULING
+  cancelAtPeriodEnd Boolean @default(false)
+  scheduledPlanId   Int?
+
   user User             @relation(fields: [userId], references: [id])
   plan SubscriptionPlan @relation(fields: [planId], references: [id])
+
+  scheduledPlan SubscriptionPlan? @relation("ScheduledPlan", fields: [scheduledPlanId], references: [id])
 
   payments Payment[]
 
   @@index([userId])
   @@index([planId])
+  @@index([scheduledPlanId])
 }
 
 // ==========================================
