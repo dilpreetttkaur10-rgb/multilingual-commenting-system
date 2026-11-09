@@ -1,53 +1,616 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
 import TurnstileCaptcha from "@/components/TurnstileCaptcha";
 import ReportComment from "@/components/ReportComment";
 
-interface Author { id: number; username: string; location?: string | null; avatarUrl?: string | null; }
-interface Reply { id: number; content: string; language: string | null; isEdited: boolean; createdAt: string; updatedAt: string; author: Author; likeCount: number; dislikeCount: number; }
-interface Comment extends Reply { replyCount: number; relevanceScore: number; replies: Reply[]; }
-const API = process.env.NEXT_PUBLIC_API_URL || "https://multilingual-commenting-system-b16w.onrender.com/api";
-const languages = [["en","English"],["hi","Hindi"],["pa","Punjabi"],["fr","French"],["de","German"],["es","Spanish"],["it","Italian"],["pt","Portuguese"],["ru","Russian"],["ar","Arabic"],["ja","Japanese"],["ko","Korean"],["zh","Chinese"]];
+interface Author {
+  id: number;
+  username: string;
+  location?: string | null;
+  avatarUrl?: string | null;
+}
+
+interface Reply {
+  id: number;
+  content: string;
+  language: string | null;
+  isEdited: boolean;
+  createdAt: string;
+  updatedAt: string;
+  author: Author;
+  likeCount: number;
+  dislikeCount: number;
+}
+
+interface Comment extends Reply {
+  replyCount: number;
+  relevanceScore: number;
+  replies: Reply[];
+}
+
+const API =
+  process.env.NEXT_PUBLIC_API_URL ||
+  "https://multilingual-commenting-system-b16w.onrender.com/api";
+
+const languages = [
+  ["en", "English"],
+  ["hi", "Hindi"],
+  ["pa", "Punjabi"],
+  ["fr", "French"],
+  ["de", "German"],
+  ["es", "Spanish"],
+  ["it", "Italian"],
+  ["pt", "Portuguese"],
+  ["ru", "Russian"],
+  ["ar", "Arabic"],
+  ["ja", "Japanese"],
+  ["ko", "Korean"],
+  ["zh", "Chinese"],
+];
 
 export default function Home() {
-  const [content,setContent]=useState(""); const [message,setMessage]=useState(""); const [loading,setLoading]=useState(false);
-  const [captchaRequired,setCaptchaRequired]=useState(false); const [turnstileToken,setTurnstileToken]=useState<string|null>(null);
-  const [comments,setComments]=useState<Comment[]>([]); const [commentsLoading,setCommentsLoading]=useState(true);
-  const [sort,setSort]=useState("newest"); const [replyParent,setReplyParent]=useState<number|null>(null); const [replyText,setReplyText]=useState("");
-  const [editId,setEditId]=useState<number|null>(null); const [editText,setEditText]=useState("");
-  const [targetLanguage,setTargetLanguage]=useState("hi"); const [translations,setTranslations]=useState<Record<number,string>>({}); const [notice,setNotice]=useState("");
+  const [content, setContent] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const token=()=>typeof window!=="undefined"?localStorage.getItem("token"):null;
-  const headers=()=>({"Content-Type":"application/json",Authorization:`Bearer ${token()||""}`});
-  const fetchComments=async(selectedSort=sort)=>{try{setCommentsLoading(true);const r=await fetch(`${API}/comments?sort=${selectedSort}`);const d=await r.json();if(r.ok)setComments(d.comments||[]);else setNotice(d.message||"Could not load comments.");}catch{setNotice("Unable to connect to backend.");}finally{setCommentsLoading(false);}};
-  useEffect(()=>{fetchComments(sort);},[sort]);
+  const [captchaRequired, setCaptchaRequired] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
 
-  const submitComment=async()=>{if(!content.trim()){setMessage("Please enter a comment.");return;}if(captchaRequired&&!turnstileToken){setMessage("Please complete CAPTCHA first.");return;}if(!token()){setMessage("Please log in first.");return;}setLoading(true);setMessage("");try{const r=await fetch(`${API}/comments`,{method:"POST",headers:headers(),body:JSON.stringify({content:content.trim(),...(turnstileToken?{turnstileToken}:{})})});const d=await r.json();if(r.ok){setMessage(d.message||"Comment posted.");setContent("");setCaptchaRequired(false);setTurnstileToken(null);await fetchComments();}else{if(d.captchaRequired){setCaptchaRequired(true);setTurnstileToken(null);}setMessage(d.message||"Posting failed.");}}catch{setMessage("Unable to connect to backend.");}finally{setLoading(false);}};
-  const submitReply=async(id:number)=>{if(!replyText.trim()){setNotice("Enter a reply first.");return;}if(!token()){setNotice("Please log in to reply.");return;}try{const r=await fetch(`${API}/comments`,{method:"POST",headers:headers(),body:JSON.stringify({content:replyText.trim(),parentId:id})});const d=await r.json();setNotice(d.message||"");if(r.ok){setReplyText("");setReplyParent(null);await fetchComments();}}catch{setNotice("Unable to connect to backend.");}};
-  const react=async(id:number,type:"LIKE"|"DISLIKE")=>{if(!token()){setNotice("Please log in to react.");return;}try{const r=await fetch(`${API}/comments/reaction`,{method:"POST",headers:headers(),body:JSON.stringify({commentId:id,type})});const d=await r.json();setNotice(d.message||"");if(r.ok)await fetchComments();}catch{setNotice("Unable to connect to backend.");}};
-  const translate=async(id:number)=>{if(!token()){setNotice("Please log in to translate.");return;}try{const r=await fetch(`${API}/comments/translate`,{method:"POST",headers:headers(),body:JSON.stringify({commentId:id,targetLanguage})});const d=await r.json();if(r.ok){setTranslations(old=>({...old,[id]:d.translatedText}));setNotice("Translation successful.");}else setNotice(d.message||"Translation failed.");}catch{setNotice("Unable to connect to backend.");}};
-  const saveEdit=async(id:number)=>{if(!editText.trim()){setNotice("Comment cannot be empty.");return;}try{const r=await fetch(`${API}/comments/${id}`,{method:"PATCH",headers:headers(),body:JSON.stringify({content:editText.trim()})});const d=await r.json();setNotice(d.message||"");if(r.ok){setEditId(null);setEditText("");await fetchComments();}}catch{setNotice("Unable to connect to backend.");}};
-  const remove=async(id:number)=>{if(!token()){setNotice("Please log in to delete.");return;}if(!window.confirm("Delete this comment?"))return;try{const r=await fetch(`${API}/comments/${id}`,{method:"DELETE",headers:headers()});const d=await r.json();setNotice(d.message||"");if(r.ok)await fetchComments();}catch{setNotice("Unable to connect to backend.");}};
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(true);
 
-  const renderComment=(item:Comment|Reply,isReply=false)=><article key={item.id} className={isReply?"rounded-lg bg-gray-50 p-4":"rounded-xl bg-white p-6 shadow-lg"}>
-    <div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700">{item.author.username.charAt(0).toUpperCase()}</div><div><p className="font-semibold text-gray-900">{item.author.username}</p><p className="text-xs text-gray-500">{item.author.location||"Unknown location"} • {new Date(item.createdAt).toLocaleString()}</p></div></div>
-    {editId===item.id?<div className="mt-3"><textarea value={editText} onChange={e=>setEditText(e.target.value)} rows={3} className="w-full rounded-lg border border-gray-300 p-3 text-gray-900"/><div className="mt-2 flex gap-2"><button onClick={()=>saveEdit(item.id)} className="rounded bg-blue-600 px-3 py-2 text-white">Save</button><button onClick={()=>{setEditId(null);setEditText("");}} className="rounded bg-gray-200 px-3 py-2 text-gray-800">Cancel</button></div></div>:<p className="mt-4 whitespace-pre-wrap text-gray-800">{item.content}</p>}
-    <div className="mt-3 flex flex-wrap gap-3 text-sm text-gray-500"><span>Language: {item.language||"Unknown"}</span>{item.isEdited&&<span>Edited</span>}<span>👍 {item.likeCount}</span><span>👎 {item.dislikeCount}</span>{!isReply&&<span>💬 {(item as Comment).replyCount}</span>}</div>
-    {translations[item.id]&&<div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 p-3"><p className="text-xs font-semibold text-indigo-700">Translation ({targetLanguage})</p><p className="text-gray-800">{translations[item.id]}</p></div>}
-    <div className="mt-3 flex flex-wrap items-center gap-2"><button onClick={()=>react(item.id,"LIKE")} className="rounded bg-gray-100 px-3 py-1.5 text-sm text-gray-800">👍 Like</button><button onClick={()=>react(item.id,"DISLIKE")} className="rounded bg-gray-100 px-3 py-1.5 text-sm text-gray-800">👎 Dislike</button><button onClick={()=>translate(item.id)} className="rounded bg-indigo-100 px-3 py-1.5 text-sm text-indigo-800">Translate</button>{!isReply&&<button onClick={()=>{setReplyParent(item.id);setReplyText("");}} className="rounded bg-green-100 px-3 py-1.5 text-sm text-green-800">Reply</button>}<ReportComment commentId={item.id} onReported={()=>setNotice(`Comment ${item.id} reported.`)}/><button onClick={()=>{setEditId(item.id);setEditText(item.content);}} className="rounded bg-amber-100 px-3 py-1.5 text-sm text-amber-800">Edit</button><button onClick={()=>remove(item.id)} className="rounded bg-red-100 px-3 py-1.5 text-sm text-red-800">Delete</button></div>
-    {!isReply&&replyParent===item.id&&<div className="mt-4 rounded border p-3"><textarea value={replyText} onChange={e=>setReplyText(e.target.value)} placeholder="Write a reply..." rows={3} className="w-full rounded border p-3 text-gray-900"/><div className="mt-2 flex gap-2"><button onClick={()=>submitReply(item.id)} className="rounded bg-green-600 px-3 py-2 text-white">Post reply</button><button onClick={()=>setReplyParent(null)} className="rounded bg-gray-200 px-3 py-2 text-gray-800">Cancel</button></div></div>}
-    {!isReply&&(item as Comment).replies?.length>0&&<div className="mt-5 space-y-3 border-l-2 border-gray-200 pl-4"><p className="font-semibold text-gray-700">Replies</p>{(item as Comment).replies.map(reply=>renderComment(reply,true))}</div>}
-  </article>;
+  const [sort, setSort] = useState("newest");
+  const [replyParent, setReplyParent] = useState<number | null>(null);
+  const [replyText, setReplyText] = useState("");
 
-  return <main className="min-h-screen bg-gray-100 px-4 py-10"><div className="mx-auto max-w-3xl">
-    <header className="mb-8 rounded-xl bg-white p-8 text-center shadow-lg"><h1 className="text-3xl font-bold text-gray-900">Multilingual Commenting System</h1><p className="mt-3 text-gray-600">Multilingual comments, moderation, reactions, replies and translation</p></header>
-    <section className="rounded-xl bg-white p-6 shadow-lg"><h2 className="mb-4 text-xl font-semibold text-gray-900">Post a Comment</h2><textarea value={content} onChange={e=>setContent(e.target.value)} placeholder="Write your comment..." rows={5} className="w-full rounded-lg border border-gray-300 p-4 text-gray-900 outline-none focus:border-blue-500"/>
-      {captchaRequired&&<div className="mt-4 rounded-lg border border-yellow-300 bg-yellow-50 p-4"><p className="mb-3 font-medium text-gray-800">CAPTCHA verification is required after repeated posting attempts.</p><TurnstileCaptcha onVerify={v=>{setTurnstileToken(v);setMessage("CAPTCHA verified.");}} onExpire={()=>{setTurnstileToken(null);setMessage("CAPTCHA expired. Verify again.");}}/></div>}
-      <button onClick={submitComment} disabled={loading} className="mt-5 w-full rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-700 disabled:bg-gray-400">{loading?"Posting...":"Post Comment"}</button>{message&&<p className="mt-4 rounded-lg bg-gray-50 p-3 text-center text-gray-700">{message}</p>}
-    </section>
-    <section className="mt-8"><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="text-2xl font-bold text-gray-900">Comments</h2><div className="flex flex-wrap items-center gap-2"><label htmlFor="sort" className="text-sm text-gray-700">Sort</label><select id="sort" value={sort} onChange={e=>setSort(e.target.value)} className="rounded-lg border bg-white px-3 py-2 text-sm text-gray-900"><option value="newest">Newest</option><option value="oldest">Oldest</option><option value="mostLiked">Most liked</option><option value="mostRelevant">Most relevant</option></select><label htmlFor="language" className="text-sm text-gray-700">Translate to</label><select id="language" value={targetLanguage} onChange={e=>setTargetLanguage(e.target.value)} className="rounded-lg border bg-white px-3 py-2 text-sm text-gray-900">{languages.map(([code,label])=><option key={code} value={code}>{label}</option>)}</select><button onClick={()=>fetchComments()} className="rounded-lg bg-gray-200 px-4 py-2 text-sm text-gray-800">Refresh</button></div></div>
-    {notice&&<p className="mb-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{notice}</p>}
-    {commentsLoading?<div className="rounded-xl bg-white p-6 text-center text-gray-600 shadow">Loading comments...</div>:comments.length===0?<div className="rounded-xl bg-white p-6 text-center text-gray-600 shadow">No comments yet.</div>:<div className="space-y-5">{comments.map(comment=>renderComment(comment))}</div>}</section>
-  </div></main>;
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editText, setEditText] = useState("");
+
+  const [targetLanguage, setTargetLanguage] = useState("hi");
+  const [translations, setTranslations] = useState<Record<number, string>>({});
+  const [notice, setNotice] = useState("");
+
+  const token = () =>
+    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+  const headers = () => ({
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token() || ""}`,
+  });
+
+  const fetchComments = async (selectedSort = sort) => {
+    try {
+      setCommentsLoading(true);
+
+      const r = await fetch(`${API}/comments?sort=${selectedSort}`);
+      const d = await r.json();
+
+      if (r.ok) {
+        setComments(d.comments || []);
+      } else {
+        setNotice(d.message || "Could not load comments.");
+      }
+    } catch {
+      setNotice("Unable to connect to backend.");
+    } finally {
+      setCommentsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchComments(sort);
+  }, [sort]);
+
+  const submitComment = async () => {
+    if (!content.trim()) {
+      setMessage("Please enter a comment.");
+      return;
+    }
+
+    if (captchaRequired && !turnstileToken) {
+      setMessage("Please complete CAPTCHA first.");
+      return;
+    }
+
+    if (!token()) {
+      setMessage("Please log in first.");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+
+    try {
+      const r = await fetch(`${API}/comments`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          content: content.trim(),
+          ...(turnstileToken ? { turnstileToken } : {}),
+        }),
+      });
+
+      const d = await r.json();
+
+      if (r.ok) {
+        setMessage(d.message || "Comment posted.");
+        setContent("");
+        setCaptchaRequired(false);
+        setTurnstileToken(null);
+        await fetchComments();
+      } else {
+        if (d.captchaRequired) {
+          setCaptchaRequired(true);
+          setTurnstileToken(null);
+        }
+
+        setMessage(d.message || "Posting failed.");
+      }
+    } catch {
+      setMessage("Unable to connect to backend.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitReply = async (id: number) => {
+    if (!replyText.trim()) {
+      setNotice("Enter a reply first.");
+      return;
+    }
+
+    if (!token()) {
+      setNotice("Please log in to reply.");
+      return;
+    }
+
+    try {
+      const r = await fetch(`${API}/comments`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          content: replyText.trim(),
+          parentId: id,
+        }),
+      });
+
+      const d = await r.json();
+      setNotice(d.message || "");
+
+      if (r.ok) {
+        setReplyText("");
+        setReplyParent(null);
+        await fetchComments();
+      }
+    } catch {
+      setNotice("Unable to connect to backend.");
+    }
+  };
+
+  const react = async (id: number, type: "LIKE" | "DISLIKE") => {
+    if (!token()) {
+      setNotice("Please log in to react.");
+      return;
+    }
+
+    try {
+      const r = await fetch(`${API}/comments/reaction`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          commentId: id,
+          type,
+        }),
+      });
+
+      const d = await r.json();
+      setNotice(d.message || "");
+
+      if (r.ok) await fetchComments();
+    } catch {
+      setNotice("Unable to connect to backend.");
+    }
+  };
+
+  const translate = async (id: number) => {
+    if (!token()) {
+      setNotice("Please log in to translate.");
+      return;
+    }
+
+    try {
+      const r = await fetch(`${API}/comments/translate`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          commentId: id,
+          targetLanguage,
+        }),
+      });
+
+      const d = await r.json();
+
+      if (r.ok) {
+        setTranslations((old) => ({
+          ...old,
+          [id]: d.translatedText,
+        }));
+
+        setNotice("Translation successful.");
+      } else {
+        setNotice(d.message || "Translation failed.");
+      }
+    } catch {
+      setNotice("Unable to connect to backend.");
+    }
+  };
+
+  const saveEdit = async (id: number) => {
+    if (!editText.trim()) {
+      setNotice("Comment cannot be empty.");
+      return;
+    }
+
+    try {
+      const r = await fetch(`${API}/comments/${id}`, {
+        method: "PATCH",
+        headers: headers(),
+        body: JSON.stringify({
+          content: editText.trim(),
+        }),
+      });
+
+      const d = await r.json();
+      setNotice(d.message || "");
+
+      if (r.ok) {
+        setEditId(null);
+        setEditText("");
+        await fetchComments();
+      }
+    } catch {
+      setNotice("Unable to connect to backend.");
+    }
+  };
+
+  const remove = async (id: number) => {
+    if (!token()) {
+      setNotice("Please log in to delete.");
+      return;
+    }
+
+    if (!window.confirm("Delete this comment?")) return;
+
+    try {
+      const r = await fetch(`${API}/comments/${id}`, {
+        method: "DELETE",
+        headers: headers(),
+      });
+
+      const d = await r.json();
+      setNotice(d.message || "");
+
+      if (r.ok) await fetchComments();
+    } catch {
+      setNotice("Unable to connect to backend.");
+    }
+  };
+
+  const renderComment = (item: Comment | Reply, isReply = false) => (
+    <article
+      key={item.id}
+      className={
+        isReply
+          ? "rounded-lg bg-gray-50 p-4"
+          : "rounded-xl bg-white p-6 shadow-lg"
+      }
+    >
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700">
+          {item.author.username.charAt(0).toUpperCase()}
+        </div>
+
+        <div>
+          <p className="font-semibold text-gray-900">
+            {item.author.username}
+          </p>
+
+          <p className="text-xs text-gray-500">
+            {item.author.location || "Unknown location"} •{" "}
+            {new Date(item.createdAt).toLocaleString()}
+          </p>
+        </div>
+      </div>
+
+      {editId === item.id ? (
+        <div className="mt-3">
+          <textarea
+            value={editText}
+            onChange={(e) => setEditText(e.target.value)}
+            rows={3}
+            className="w-full rounded-lg border border-gray-300 p-3 text-gray-900"
+          />
+
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={() => saveEdit(item.id)}
+              className="rounded bg-blue-600 px-3 py-2 text-white"
+            >
+              Save
+            </button>
+
+            <button
+              onClick={() => {
+                setEditId(null);
+                setEditText("");
+              }}
+              className="rounded bg-gray-200 px-3 py-2 text-gray-800"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-4 whitespace-pre-wrap text-gray-800">
+          {item.content}
+        </p>
+      )}
+
+      <div className="mt-3 flex flex-wrap gap-3 text-sm text-gray-500">
+        <span>Language: {item.language || "Unknown"}</span>
+        {item.isEdited && <span>Edited</span>}
+        <span>👍 {item.likeCount}</span>
+        <span>👎 {item.dislikeCount}</span>
+
+        {!isReply && <span>💬 {(item as Comment).replyCount}</span>}
+      </div>
+
+      {translations[item.id] && (
+        <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 p-3">
+          <p className="text-xs font-semibold text-indigo-700">
+            Translation ({targetLanguage})
+          </p>
+
+          <p className="text-gray-800">{translations[item.id]}</p>
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => react(item.id, "LIKE")}
+          className="rounded bg-gray-100 px-3 py-1.5 text-sm text-gray-800"
+        >
+          👍 Like
+        </button>
+
+        <button
+          onClick={() => react(item.id, "DISLIKE")}
+          className="rounded bg-gray-100 px-3 py-1.5 text-sm text-gray-800"
+        >
+          👎 Dislike
+        </button>
+
+        <button
+          onClick={() => translate(item.id)}
+          className="rounded bg-indigo-100 px-3 py-1.5 text-sm text-indigo-800"
+        >
+          Translate
+        </button>
+
+        {!isReply && (
+          <button
+            onClick={() => {
+              setReplyParent(item.id);
+              setReplyText("");
+            }}
+            className="rounded bg-green-100 px-3 py-1.5 text-sm text-green-800"
+          >
+            Reply
+          </button>
+        )}
+
+        <ReportComment
+          commentId={item.id}
+          onReported={() => setNotice(`Comment ${item.id} reported.`)}
+        />
+
+        <button
+          onClick={() => {
+            setEditId(item.id);
+            setEditText(item.content);
+          }}
+          className="rounded bg-amber-100 px-3 py-1.5 text-sm text-amber-800"
+        >
+          Edit
+        </button>
+
+        <button
+          onClick={() => remove(item.id)}
+          className="rounded bg-red-100 px-3 py-1.5 text-sm text-red-800"
+        >
+          Delete
+        </button>
+      </div>
+
+      {!isReply && replyParent === item.id && (
+        <div className="mt-4 rounded border p-3">
+          <textarea
+            value={replyText}
+            onChange={(e) => setReplyText(e.target.value)}
+            placeholder="Write a reply..."
+            rows={3}
+            className="w-full rounded border p-3 text-gray-900"
+          />
+
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={() => submitReply(item.id)}
+              className="rounded bg-green-600 px-3 py-2 text-white"
+            >
+              Post reply
+            </button>
+
+            <button
+              onClick={() => setReplyParent(null)}
+              className="rounded bg-gray-200 px-3 py-2 text-gray-800"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!isReply && (item as Comment).replies?.length > 0 && (
+        <div className="mt-5 space-y-3 border-l-2 border-gray-200 pl-4">
+          <p className="font-semibold text-gray-700">Replies</p>
+
+          {(item as Comment).replies.map((reply) =>
+            renderComment(reply, true)
+          )}
+        </div>
+      )}
+    </article>
+  );
+
+  return (
+    <main className="min-h-screen bg-gray-100 px-4 py-10">
+      <div className="mx-auto max-w-3xl">
+        <header className="mb-8 rounded-xl bg-white p-8 text-center shadow-lg">
+          <h1 className="text-3xl font-bold text-gray-900">
+            Multilingual Commenting System
+          </h1>
+
+          <p className="mt-3 text-gray-600">
+            Multilingual comments, moderation, reactions, replies and translation
+          </p>
+
+          <a
+            href="/login"
+            className="mt-4 inline-block rounded-lg bg-blue-600 px-6 py-2 font-semibold text-white hover:bg-blue-700"
+          >
+            Login / Register
+          </a>
+        </header>
+
+        <section className="rounded-xl bg-white p-6 shadow-lg">
+          <h2 className="mb-4 text-xl font-semibold text-gray-900">
+            Post a Comment
+          </h2>
+
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder="Write your comment..."
+            rows={5}
+            className="w-full rounded-lg border border-gray-300 p-4 text-gray-900 outline-none focus:border-blue-500"
+          />
+
+          {captchaRequired && (
+            <div className="mt-4 rounded-lg border border-yellow-300 bg-yellow-50 p-4">
+              <p className="mb-3 font-medium text-gray-800">
+                CAPTCHA verification is required after repeated posting attempts.
+              </p>
+
+              <TurnstileCaptcha
+                onVerify={(v) => {
+                  setTurnstileToken(v);
+                  setMessage("CAPTCHA verified.");
+                }}
+                onExpire={() => {
+                  setTurnstileToken(null);
+                  setMessage("CAPTCHA expired. Verify again.");
+                }}
+              />
+            </div>
+          )}
+
+          <button
+            onClick={submitComment}
+            disabled={loading}
+            className="mt-5 w-full rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-700 disabled:bg-gray-400"
+          >
+            {loading ? "Posting..." : "Post Comment"}
+          </button>
+
+          {message && (
+            <p className="mt-4 rounded-lg bg-gray-50 p-3 text-center text-gray-700">
+              {message}
+            </p>
+          )}
+        </section>
+
+        <section className="mt-8">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-2xl font-bold text-gray-900">
+              Comments
+            </h2>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="sort" className="text-sm text-gray-700">
+                Sort
+              </label>
+
+              <select
+                id="sort"
+                value={sort}
+                onChange={(e) => setSort(e.target.value)}
+                className="rounded-lg border bg-white px-3 py-2 text-sm text-gray-900"
+              >
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+                <option value="mostLiked">Most liked</option>
+                <option value="mostRelevant">Most relevant</option>
+              </select>
+
+              <label htmlFor="language" className="text-sm text-gray-700">
+                Translate to
+              </label>
+
+              <select
+                id="language"
+                value={targetLanguage}
+                onChange={(e) => setTargetLanguage(e.target.value)}
+                className="rounded-lg border bg-white px-3 py-2 text-sm text-gray-900"
+              >
+                {languages.map(([code, label]) => (
+                  <option key={code} value={code}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                onClick={() => fetchComments()}
+                className="rounded-lg bg-gray-200 px-4 py-2 text-sm text-gray-800"
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          {notice && (
+            <p className="mb-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">
+              {notice}
+            </p>
+          )}
+
+          {commentsLoading ? (
+            <div className="rounded-xl bg-white p-6 text-center text-gray-600 shadow">
+              Loading comments...
+            </div>
+          ) : comments.length === 0 ? (
+            <div className="rounded-xl bg-white p-6 text-center text-gray-600 shadow">
+              No comments yet.
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {comments.map((comment) => renderComment(comment))}
+            </div>
+          )}
+        </section>
+      </div>
+    </main>
+  );
 }
