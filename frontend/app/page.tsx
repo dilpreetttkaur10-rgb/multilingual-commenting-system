@@ -7,7 +7,7 @@ import ReportComment from "@/components/ReportComment";
 interface Author { id: number; username: string; location?: string | null; avatarUrl?: string | null; }
 interface Reply { id: number; content: string; language: string | null; isEdited: boolean; createdAt: string; updatedAt: string; author: Author; likeCount: number; dislikeCount: number; }
 interface Comment extends Reply { replyCount: number; relevanceScore: number; replies: Reply[]; }
-const API = "http://localhost:5000/api";
+const API = process.env.NEXT_PUBLIC_API_URL || "https://multilingual-commenting-system-b16w.onrender.com/api";
 const languages = [["en","English"],["hi","Hindi"],["pa","Punjabi"],["fr","French"],["de","German"],["es","Spanish"],["it","Italian"],["pt","Portuguese"],["ru","Russian"],["ar","Arabic"],["ja","Japanese"],["ko","Korean"],["zh","Chinese"]];
 
 export default function Home() {
