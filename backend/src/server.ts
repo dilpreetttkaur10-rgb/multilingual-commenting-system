@@ -1,7 +1,8 @@
 
+import "dotenv/config";
+
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import { createServer } from "http";
 
 import { createSocketServer } from "./socket/socketServer";
@@ -13,8 +14,6 @@ import downloadRoutes from "./routes/downloadRoutes";
 import subscriptionRoutes from "./routes/subscriptionRoutes";
 import paymentRoutes from "./routes/paymentRoutes";
 import invoiceRoutes from "./routes/invoiceRoutes";
-
-dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
@@ -34,7 +33,6 @@ app.use(
     credentials: true,
   })
 );
-
 
 app.use(express.json());
 
@@ -85,4 +83,9 @@ createSocketServer(httpServer);
 httpServer.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
   console.log("Socket.IO signaling server initialized");
+
+  console.log(
+    "JWT_SECRET loaded:",
+    Boolean(process.env.JWT_SECRET)
+  );
 });
