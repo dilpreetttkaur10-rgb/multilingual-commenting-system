@@ -30,9 +30,14 @@ interface Comment extends Reply {
   replies: Reply[];
 }
 
-const API =
+const API_BASE_URL = (
   process.env.NEXT_PUBLIC_API_URL ||
-  "https://multilingual-commenting-system-b16w.onrender.com/api";
+  "https://multilingual-commenting-system-b16w.onrender.com"
+)
+  .replace(/\/+$/, "")
+  .replace(/\/api$/, "");
+
+const API = `${API_BASE_URL}/api`;
 
 const languages = [
   ["en", "English"],
@@ -84,7 +89,9 @@ export default function Home() {
     try {
       setCommentsLoading(true);
 
-      const r = await fetch(`${API}/comments?sort=${selectedSort}`);
+      const r = await fetch(
+        `${API}/comments?sort=${selectedSort}`
+      );
       const d = await r.json();
 
       if (r.ok) {

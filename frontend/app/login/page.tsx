@@ -1,10 +1,16 @@
+
 "use client";
 
 import { useState } from "react";
 
-const API =
+const API_BASE_URL = (
   process.env.NEXT_PUBLIC_API_URL ||
-  "https://multilingual-commenting-system-b16w.onrender.com/api";
+  "https://multilingual-commenting-system-b16w.onrender.com"
+)
+  .replace(/\/+$/, "")
+  .replace(/\/api$/, "");
+
+const API = `${API_BASE_URL}/api`;
 
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -42,8 +48,15 @@ export default function LoginPage() {
 
       const body =
         mode === "register"
-          ? { username: username.trim(), email: email.trim(), password }
-          : { email: email.trim(), password };
+          ? {
+              username: username.trim(),
+              email: email.trim(),
+              password,
+            }
+          : {
+              email: email.trim(),
+              password,
+            };
 
       const response = await fetch(`${API}${endpoint}`, {
         method: "POST",
@@ -95,11 +108,14 @@ export default function LoginPage() {
     setMessage("");
 
     try {
-      const response = await fetch(`${API}/auth/verify-login-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ otp, pendingToken }),
-      });
+      const response = await fetch(
+        `${API}/auth/verify-login-otp`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ otp, pendingToken }),
+        }
+      );
 
       const data = await response.json();
 
