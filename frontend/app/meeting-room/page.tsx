@@ -57,6 +57,16 @@ export default function MeetingRoomPage() {
   };
 
   useEffect(() => {
+    const savedToken = window.localStorage.getItem("token");
+    if (savedToken) {
+      setToken(savedToken);
+      setStatus("Login token found. Click Connect to enter a meeting.");
+    } else {
+      setStatus("Please log in first. Your login token will be loaded automatically.");
+    }
+  }, []);
+
+  useEffect(() => {
     return () => {
       socketRef.current?.disconnect();
     };
@@ -443,18 +453,9 @@ export default function MeetingRoomPage() {
 
         <h2 className="mb-5 text-xl font-semibold">Meeting Room</h2>
 
-        <label className="mb-2 block font-medium">
-          Login Token
-        </label>
-
-        <input
-          type="password"
-          autoComplete="off"
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
-          placeholder="Paste fresh login token"
-          className="mb-4 w-full rounded-lg border p-3"
-        />
+        <p className="mb-4 text-sm text-gray-600">
+          Your saved login session is used automatically. Log in to the main website first, then click Connect.
+        </p>
 
         <div className="mb-5 flex flex-wrap gap-3">
           <button
