@@ -27,3 +27,10 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+# Backup files
+*.bak*
+
+# Local testing files
+backend/activateFreeSubscription.js
+backend/checkSubscription.js
+project.zip
