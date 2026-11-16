@@ -64,7 +64,7 @@ async function main() {
       name: "FREE",
       price: 0,
       durationDays: 30,
-      downloadLimit: 5,
+      downloadLimit: 1,
       maxFileSizeMB: 100,
 
       premiumVideoAccess: false,

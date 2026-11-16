@@ -19,6 +19,59 @@ const getPlanLevel = (planName: string): number => {
 };
 
 // ==========================================
+// DOWNLOAD QUOTA HELPER
+// ==========================================
+
+const getDownloadQuota = async (
+  userId: number,
+  plan: {
+    name: string;
+    downloadLimit: number;
+  },
+  now: Date = new Date()
+) => {
+  const isFree = plan.name.toUpperCase() === "FREE";
+  const downloadLimit = isFree ? 1 : plan.downloadLimit;
+
+  // Convert current time to IST
+  const istNow = new Date(now.getTime() + 330 * 60 * 1000);
+
+  const year = istNow.getUTCFullYear();
+  const month = istNow.getUTCMonth();
+  const day = istNow.getUTCDate();
+
+  // FREE: midnight-to-midnight IST
+  // Paid: first-to-first of the month IST
+  const periodStart = isFree
+    ? new Date(Date.UTC(year, month, day) - 330 * 60 * 1000)
+    : new Date(Date.UTC(year, month, 1) - 330 * 60 * 1000);
+
+  const periodEnd = isFree
+    ? new Date(periodStart.getTime() + 24 * 60 * 60 * 1000)
+    : new Date(
+        Date.UTC(year, month + 1, 1) - 330 * 60 * 1000
+      );
+
+  const downloadsUsed = await prisma.download.count({
+    where: {
+      userId,
+      createdAt: {
+        gte: periodStart,
+        lt: periodEnd,
+      },
+    },
+  });
+
+  return {
+    limit: downloadLimit,
+    used: downloadsUsed,
+    remaining: Math.max(downloadLimit - downloadsUsed, 0),
+    resetAt: periodEnd,
+    period: isFree ? "DAILY" : "MONTHLY",
+  };
+};
+
+// ==========================================
 // GET SUBSCRIPTION PLANS
 // ==========================================
 
@@ -60,7 +113,10 @@ export const getSubscriptionPlans = async (
           ? "Yearly"
           : `${plan.durationDays} days`,
       downloads: {
-        limit: plan.downloadLimit,
+        limit:
+          plan.name.toUpperCase() === "FREE"
+            ? 1
+            : plan.downloadLimit,
         maxFileSizeMB: plan.maxFileSizeMB,
       },
       features: {
@@ -153,10 +209,10 @@ export const getCurrentSubscription = async (
       millisecondsRemaining / (1000 * 60 * 60 * 24)
     );
 
-    const downloadsRemaining = Math.max(
-      subscription.plan.downloadLimit -
-        subscription.downloadsUsed,
-      0
+    const downloadQuota = await getDownloadQuota(
+      userId,
+      subscription.plan,
+      now
     );
 
     return res.status(200).json({
@@ -177,9 +233,7 @@ export const getCurrentSubscription = async (
         cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
         scheduledPlanId: subscription.scheduledPlanId,
         downloads: {
-          limit: subscription.plan.downloadLimit,
-          used: subscription.downloadsUsed,
-          remaining: downloadsRemaining,
+          ...downloadQuota,
           maxFileSizeMB: subscription.plan.maxFileSizeMB,
         },
         features: {
@@ -248,7 +302,10 @@ export const upgradeSubscription = async (
       });
     }
 
-    if (plan.name.toUpperCase() === "FREE" || plan.price.toNumber() <= 0) {
+    if (
+      plan.name.toUpperCase() === "FREE" ||
+      plan.price.toNumber() <= 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "A paid plan is required for upgrade",
@@ -327,6 +384,7 @@ export const upgradeSubscription = async (
     });
   }
 };
+
 // ==========================================
 // DOWNGRADE SUBSCRIPTION
 // ==========================================
@@ -453,10 +511,8 @@ export const downgradeSubscription = async (
         scheduledPlan:
           scheduledSubscription.scheduledPlan
             ? {
-                id:
-                  scheduledSubscription.scheduledPlan.id,
-                name:
-                  scheduledSubscription.scheduledPlan.name,
+                id: scheduledSubscription.scheduledPlan.id,
+                name: scheduledSubscription.scheduledPlan.name,
               }
             : null,
         startDate: scheduledSubscription.startDate,
@@ -533,6 +589,11 @@ export const cancelSubscription = async (
       });
     }
 
+    const downloadQuota = await getDownloadQuota(
+      userId,
+      currentSubscription.plan
+    );
+
     const cancelledSubscription =
       await prisma.userSubscription.update({
         where: {
@@ -565,15 +626,7 @@ export const cancelSubscription = async (
         cancellationEffectiveDate:
           cancelledSubscription.endDate,
         downloads: {
-          limit:
-            cancelledSubscription.plan.downloadLimit,
-          used:
-            cancelledSubscription.downloadsUsed,
-          remaining: Math.max(
-            cancelledSubscription.plan.downloadLimit -
-              cancelledSubscription.downloadsUsed,
-            0
-          ),
+          ...downloadQuota,
           maxFileSizeMB:
             cancelledSubscription.plan.maxFileSizeMB,
         },
@@ -665,4 +718,3 @@ export const renewSubscription = async (
     });
   }
 };
-
