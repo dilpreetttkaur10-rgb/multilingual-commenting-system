@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "https://multilingual-commenting-system-b16w.onrender.com").replace(/\/+$/, "").replace(/\/api$/, "");
+const API = `${API_BASE_URL}/api`;
+
 interface ReportCommentProps {
   commentId: number;
   onReported?: () => void;
@@ -55,7 +58,7 @@ export default function ReportComment({
       }
 
       const response = await fetch(
-        "http://localhost:5000/api/reports",
+        `${API}/reports`,
         {
           method: "POST",
           headers: {
