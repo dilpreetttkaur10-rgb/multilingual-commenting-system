@@ -11,7 +11,7 @@ type CallEvent = {
   message?: string;
 };
 
-const SOCKET_URL = "http://localhost:5000";
+const SOCKET_URL = (process.env.NEXT_PUBLIC_API_URL || "https://multilingual-commenting-system-b16w.onrender.com").replace(/\/+$/, "").replace(/\/api$/, "");
 
 const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
