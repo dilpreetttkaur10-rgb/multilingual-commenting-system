@@ -824,6 +824,16 @@ export default function VideoCallPage() {
   }, [stopMedia]);
 
   useEffect(() => {
+    const savedToken = window.localStorage.getItem("token");
+    if (savedToken) {
+      setToken(savedToken);
+      setStatus("Login token found. Click Connect to join the video call server.");
+    } else {
+      setStatus("Please log in first. Your login token will be loaded automatically.");
+    }
+  }, []);
+
+  useEffect(() => {
     return () => {
       socketRef.current?.disconnect();
 
@@ -861,25 +871,9 @@ export default function VideoCallPage() {
         </header>
 
         <section className="mb-6 rounded-2xl border border-slate-800 bg-slate-900 p-5">
-          <label
-            className="mb-2 block text-sm font-medium"
-            htmlFor="token"
-          >
-            Login token
-          </label>
-
-          <textarea
-            id="token"
-            value={token}
-            onChange={(event) =>
-              setToken(event.target.value)
-            }
-            placeholder="Paste your JWT login token here"
-            rows={3}
-            autoComplete="off"
-            spellCheck={false}
-            className="w-full resize-y rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm outline-none focus:border-indigo-500"
-          />
+          <p className="text-sm text-slate-300">
+            Your saved login session is used automatically. Log in to the main website first, then click Connect below.
+          </p>
 
           <div className="mt-4 flex flex-wrap gap-3">
             <button
