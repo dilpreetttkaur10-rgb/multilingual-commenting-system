@@ -5,6 +5,15 @@ import { useEffect, useState } from "react";
 import TurnstileCaptcha from "@/components/TurnstileCaptcha";
 import ReportComment from "@/components/ReportComment";
 
+const API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_URL ||
+  "https://multilingual-commenting-system-b16w.onrender.com"
+)
+  .replace(/\/+$/, "")
+  .replace(/\/api$/, "");
+
+const API = `${API_BASE_URL}/api`;
+
 interface Author {
   id: number;
   username: string;
@@ -29,15 +38,6 @@ interface Comment extends Reply {
   relevanceScore: number;
   replies: Reply[];
 }
-
-const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL ||
-  "https://multilingual-commenting-system-b16w.onrender.com"
-)
-  .replace(/\/+$/, "")
-  .replace(/\/api$/, "");
-
-const API = `${API_BASE_URL}/api`;
 
 const languages = [
   ["en", "English"],
@@ -78,7 +78,9 @@ export default function Home() {
   const [notice, setNotice] = useState("");
 
   const token = () =>
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    typeof window !== "undefined"
+      ? localStorage.getItem("token")
+      : null;
 
   const headers = () => ({
     "Content-Type": "application/json",
@@ -90,12 +92,14 @@ export default function Home() {
       setCommentsLoading(true);
 
       const r = await fetch(
-        `${API}/comments?sort=${selectedSort}`
+        `${API}/comments?sort=${encodeURIComponent(selectedSort)}`
       );
+
       const d = await r.json();
 
       if (r.ok) {
         setComments(d.comments || []);
+        setNotice("");
       } else {
         setNotice(d.message || "Could not load comments.");
       }
@@ -110,6 +114,7 @@ export default function Home() {
     fetchComments(sort);
   }, [sort]);
 
+  // SUBMIT COMMENT
   const submitComment = async () => {
     if (!content.trim()) {
       setMessage("Please enter a comment.");
@@ -162,6 +167,7 @@ export default function Home() {
     }
   };
 
+  // SUBMIT REPLY
   const submitReply = async (id: number) => {
     if (!replyText.trim()) {
       setNotice("Enter a reply first.");
@@ -196,6 +202,7 @@ export default function Home() {
     }
   };
 
+  // LIKE / DISLIKE
   const react = async (id: number, type: "LIKE" | "DISLIKE") => {
     if (!token()) {
       setNotice("Please log in to react.");
@@ -215,12 +222,15 @@ export default function Home() {
       const d = await r.json();
       setNotice(d.message || "");
 
-      if (r.ok) await fetchComments();
+      if (r.ok) {
+        await fetchComments();
+      }
     } catch {
       setNotice("Unable to connect to backend.");
     }
   };
 
+  // TRANSLATE COMMENT
   const translate = async (id: number) => {
     if (!token()) {
       setNotice("Please log in to translate.");
@@ -254,9 +264,15 @@ export default function Home() {
     }
   };
 
+  // EDIT COMMENT
   const saveEdit = async (id: number) => {
     if (!editText.trim()) {
       setNotice("Comment cannot be empty.");
+      return;
+    }
+
+    if (!token()) {
+      setNotice("Please log in to edit.");
       return;
     }
 
@@ -282,6 +298,7 @@ export default function Home() {
     }
   };
 
+  // DELETE COMMENT
   const remove = async (id: number) => {
     if (!token()) {
       setNotice("Please log in to delete.");
@@ -299,12 +316,15 @@ export default function Home() {
       const d = await r.json();
       setNotice(d.message || "");
 
-      if (r.ok) await fetchComments();
+      if (r.ok) {
+        await fetchComments();
+      }
     } catch {
       setNotice("Unable to connect to backend.");
     }
   };
 
+  // RENDER COMMENTS AND REPLIES
   const renderComment = (item: Comment | Reply, isReply = false) => (
     <article
       key={item.id}
@@ -371,7 +391,9 @@ export default function Home() {
         <span>👍 {item.likeCount}</span>
         <span>👎 {item.dislikeCount}</span>
 
-        {!isReply && <span>💬 {(item as Comment).replyCount}</span>}
+        {!isReply && (
+          <span>💬 {(item as Comment).replyCount}</span>
+        )}
       </div>
 
       {translations[item.id] && (
@@ -379,7 +401,6 @@ export default function Home() {
           <p className="text-xs font-semibold text-indigo-700">
             Translation ({targetLanguage})
           </p>
-
           <p className="text-gray-800">{translations[item.id]}</p>
         </div>
       )}
