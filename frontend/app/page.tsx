@@ -546,6 +546,9 @@ export default function Home() {
             <a href="/admin" className="rounded-lg border border-gray-200 p-4 font-semibold text-gray-900 hover:bg-gray-50">
               Admin Panel <span className="mt-1 block text-xs font-normal text-gray-600">Open administrative tools if authorized</span>
             </a>
+            <a href="/subscription" className="rounded-lg border border-gray-200 p-4 font-semibold text-gray-900 hover:bg-gray-50">
+              Subscription & Downloads <span className="mt-1 block text-xs font-normal text-gray-600">View plans, payment history, invoices and download requests</span>
+            </a>
           </div>
         </section>
 
