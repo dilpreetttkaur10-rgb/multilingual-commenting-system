@@ -19,6 +19,13 @@ const app = express();
 const httpServer = createServer(app);
 
 const PORT = process.env.PORT || 5000;
+const allowedOrigins = (process.env.FRONTEND_URL || "https://multilingual-commenting-system.vercel.app")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+if (!allowedOrigins.includes("http://localhost:3000")) {
+  allowedOrigins.push("http://localhost:3000");
+}
 
 // ==========================================
 // MIDDLEWARE
@@ -26,10 +33,7 @@ const PORT = process.env.PORT || 5000;
 
 app.use(
   cors({
-    origin: [
-      "http://localhost:3000",
-      "https://multilingual-commenting-system.vercel.app",
-    ],
+    origin: allowedOrigins,
     credentials: true,
   })
 );
@@ -74,7 +78,7 @@ app.get("/api/health", (_req, res) => {
 // SOCKET.IO SIGNALING SERVER
 // ==========================================
 
-createSocketServer(httpServer);
+createSocketServer(httpServer, allowedOrigins);
 
 // ==========================================
 // START SERVER
