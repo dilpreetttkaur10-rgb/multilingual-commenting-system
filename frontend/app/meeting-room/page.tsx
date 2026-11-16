@@ -16,6 +16,8 @@ type ChatMessage = {
   timestamp: string;
 };
 
+const SOCKET_URL = (process.env.NEXT_PUBLIC_API_URL || "https://multilingual-commenting-system-b16w.onrender.com").replace(/\/+$/, "").replace(/\/api$/, "");
+
 export default function MeetingRoomPage() {
   const socketRef = useRef<Socket | null>(null);
   const myUserIdRef = useRef<number | null>(null);
@@ -76,7 +78,7 @@ export default function MeetingRoomPage() {
 
     setStatus("Connecting...");
 
-    const socket = io("http://localhost:5000", {
+    const socket = io(SOCKET_URL, {
       auth: { token: token.trim() },
       transports: ["websocket", "polling"],
     });
