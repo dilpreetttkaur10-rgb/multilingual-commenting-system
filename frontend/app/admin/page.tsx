@@ -38,6 +38,9 @@ interface Report {
   comment: ReportedComment;
 }
 
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "https://multilingual-commenting-system-b16w.onrender.com").replace(/\/+$/, "").replace(/\/api$/, "");
+const API = `${API_BASE_URL}/api`;
+
 const statusOptions = [
   "ALL",
   "PENDING",
@@ -68,7 +71,7 @@ export default function AdminPage() {
         return;
       }
 
-      let url = "http://localhost:5000/api/reports";
+      let url = `${API}/reports`;
 
       if (selectedStatus !== "ALL") {
         url += `?status=${selectedStatus}`;
@@ -122,7 +125,7 @@ export default function AdminPage() {
       }
 
       const response = await fetch(
-        `http://localhost:5000/api/reports/${reportId}/status`,
+        `${API}/reports/${reportId}/status`,
         {
           method: "PATCH",
           headers: {
