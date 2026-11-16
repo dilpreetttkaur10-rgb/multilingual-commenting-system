@@ -522,6 +522,33 @@ export default function Home() {
           </a>
         </header>
 
+        <section className="mb-8 rounded-xl bg-white p-6 shadow-lg">
+          <h2 className="text-2xl font-bold text-gray-900">Explore Project Features</h2>
+          <p className="mt-2 text-sm text-gray-600">
+            Open the main modules of the Multilingual Commenting System. All modules are part of this same website.
+          </p>
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <a href="#comments" className="rounded-lg border border-blue-200 bg-blue-50 p-4 font-semibold text-blue-800 hover:bg-blue-100">
+              Multilingual Comments <span className="mt-1 block text-xs font-normal">Post, translate, react, reply and report</span>
+            </a>
+            <a href="/video-demo" className="rounded-lg border border-gray-200 p-4 font-semibold text-gray-900 hover:bg-gray-50">
+              Video Player <span className="mt-1 block text-xs font-normal text-gray-600">Playback, seek, volume and speed controls</span>
+            </a>
+            <a href="/video-call" className="rounded-lg border border-gray-200 p-4 font-semibold text-gray-900 hover:bg-gray-50">
+              Video Calling <span className="mt-1 block text-xs font-normal text-gray-600">Start or receive a real-time call</span>
+            </a>
+            <a href="/meeting-room" className="rounded-lg border border-gray-200 p-4 font-semibold text-gray-900 hover:bg-gray-50">
+              Meeting Rooms <span className="mt-1 block text-xs font-normal text-gray-600">Create or join a room and collaborate</span>
+            </a>
+            <a href="/login" className="rounded-lg border border-gray-200 p-4 font-semibold text-gray-900 hover:bg-gray-50">
+              Login / Register <span className="mt-1 block text-xs font-normal text-gray-600">Access your account</span>
+            </a>
+            <a href="/admin" className="rounded-lg border border-gray-200 p-4 font-semibold text-gray-900 hover:bg-gray-50">
+              Admin Panel <span className="mt-1 block text-xs font-normal text-gray-600">Open administrative tools if authorized</span>
+            </a>
+          </div>
+        </section>
+
         <section className="rounded-xl bg-white p-6 shadow-lg">
           <h2 className="mb-4 text-xl font-semibold text-gray-900">
             Post a Comment
@@ -569,7 +596,7 @@ export default function Home() {
           )}
         </section>
 
-        <section className="mt-8">
+        <section id="comments" className="mt-8">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-2xl font-bold text-gray-900">
               Comments
