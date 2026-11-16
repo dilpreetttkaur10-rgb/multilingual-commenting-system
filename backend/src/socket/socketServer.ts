@@ -119,10 +119,10 @@ function transferMeetingHost(io: Server, roomId: string): void {
   );
 }
 
-export function createSocketServer(httpServer: HttpServer): Server {
+export function createSocketServer(httpServer: HttpServer, allowedOrigins: string[] = ["http://localhost:3000", "https://multilingual-commenting-system.vercel.app"]): Server {
   const io = new Server(httpServer, {
     cors: {
-      origin: "http://localhost:3000",
+      origin: allowedOrigins,
       methods: ["GET", "POST"],
       credentials: true,
     },
