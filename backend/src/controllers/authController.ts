@@ -26,6 +26,13 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // login. This stops attackers from discovering which emails are registered.
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync("dummy-password-not-real", 10);
 
+// DEMO ONLY: emails listed in the DEMO_OTP_BYPASS_EMAILS environment variable
+// (comma separated) skip the OTP step. Remove the variable after evaluation.
+const DEMO_BYPASS_EMAILS = (process.env.DEMO_OTP_BYPASS_EMAILS || "")
+  .split(",")
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
 type DeviceDetails = ReturnType<typeof detectDevice>;
 
 /* -------------------------------------------------------------------------- */
@@ -348,10 +355,13 @@ export const login = async (req: Request, res: Response) => {
       },
     });
 
+    const isDemoBypass = DEMO_BYPASS_EMAILS.includes(normalizedEmail);
+
     const isTrusted =
-      !!existingTrustedDevice &&
-      !existingTrustedDevice.revokedAt &&
-      existingTrustedDevice.trustedUntil > new Date();
+      isDemoBypass ||
+      (!!existingTrustedDevice &&
+        !existingTrustedDevice.revokedAt &&
+        existingTrustedDevice.trustedUntil > new Date());
 
     /* ------------------------- New / untrusted device ------------------------ */
     if (!isTrusted) {
@@ -442,14 +452,16 @@ export const login = async (req: Request, res: Response) => {
     }
 
     /* ----------------------------- Trusted device ---------------------------- */
-    await prisma.trustedDevice.update({
-      where: { id: existingTrustedDevice.id },
-      data: {
-        lastUsedAt: new Date(),
-        ipAddress,
-        ...toDeviceFields(deviceDetails),
-      },
-    });
+    if (existingTrustedDevice) {
+      await prisma.trustedDevice.update({
+        where: { id: existingTrustedDevice.id },
+        data: {
+          lastUsedAt: new Date(),
+          ipAddress,
+          ...toDeviceFields(deviceDetails),
+        },
+      });
+    }
 
     const themePreference = await resolveTheme(user);
 
