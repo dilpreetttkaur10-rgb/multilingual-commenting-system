@@ -16,12 +16,15 @@ const supportedLanguages = [
   "ja",
   "ko",
   "zh",
+  "bn",
+  "ur",
+  "ta",
+  "te",
+  "mr",
+  "gu",
 ];
 
-export const translateComment = async (
-  req: Request,
-  res: Response
-) => {
+export const translateComment = async (req: Request, res: Response) => {
   try {
     const { commentId, targetLanguage } = req.body;
 
@@ -76,10 +79,11 @@ export const translateComment = async (
       });
     }
 
+    // Order: text, target language, source language
     const translatedText = await translateText(
       comment.content,
-      comment.language,
-      target
+      target,
+      comment.language
     );
 
     if (!translatedText) {
@@ -103,7 +107,7 @@ export const translateComment = async (
 
     return res.status(500).json({
       success: false,
-      message: "Something went wrong",
+      message: "Translation failed. Please try again.",
     });
   }
 };
