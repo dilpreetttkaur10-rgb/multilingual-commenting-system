@@ -12,9 +12,27 @@ import {
 } from "../utils/sessionManager";
 import { sendLoginOtpEmail } from "../services/emailService";
 
+/* -------------------------------------------------------------------------- */
+/* Constants                                                                  */
+/* -------------------------------------------------------------------------- */
+
 const OTP_EXPIRY_MINUTES = 10;
 const OTP_MAX_ATTEMPTS = 5;
 const TRUSTED_DEVICE_DAYS = 30;
+const MIN_PASSWORD_LENGTH = 6;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Used so a "user not found" login takes the same time as a "wrong password"
+// login. This stops attackers from discovering which emails are registered.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync("dummy-password-not-real", 10);
+
+type DeviceDetails = ReturnType<typeof detectDevice>;
+
+/* -------------------------------------------------------------------------- */
+/* Helpers                                                                    */
+/* -------------------------------------------------------------------------- */
+
+const getJwtSecret = (): string | null => process.env.JWT_SECRET || null;
 
 const getAutomaticTheme = (): ThemePreference => {
   const hour = Number(
@@ -28,33 +46,99 @@ const getAutomaticTheme = (): ThemePreference => {
   return hour >= 5 && hour < 12 ? "LIGHT" : "DARK";
 };
 
-const createDeviceFingerprint = (
-  userAgent: string,
-  browser: string,
-  browserVersion: string,
-  operatingSystem: string,
-  deviceType: string,
-  deviceModel: string | null
-): string => {
-  // Do not include IP address: Render/proxies and mobile networks can
-  // change it between login and OTP verification.
-  const fingerprintData = [
-    userAgent,
-    browser,
-    browserVersion,
-    operatingSystem,
-    deviceType,
-    deviceModel || "",
-  ].join("|");
+/**
+ * OPTIONAL but recommended: the frontend can create a random ID once,
+ * save it in localStorage, and send it in the "x-device-id" header on every
+ * request. This makes two identical phones count as two different devices.
+ * If the header is missing, everything still works using the user-agent only.
+ */
+const getClientDeviceId = (req: Request): string => {
+  const value = req.get("x-device-id");
 
-  return crypto
-    .createHash("sha256")
-    .update(fingerprintData)
-    .digest("hex");
+  if (typeof value !== "string") return "";
+
+  const trimmed = value.trim();
+
+  return trimmed.length >= 8 && trimmed.length <= 128 ? trimmed : "";
 };
 
-const getJwtSecret = (): string | null => {
-  return process.env.JWT_SECRET || null;
+const createDeviceFingerprint = (
+  userAgent: string,
+  details: DeviceDetails,
+  clientDeviceId: string
+): string => {
+  // IP address is NOT included: proxies and mobile networks can change it
+  // between login and OTP verification.
+  const fingerprintData = [
+    userAgent,
+    details.browser,
+    details.browserVersion,
+    details.operatingSystem,
+    details.deviceType,
+    details.deviceModel || "",
+    clientDeviceId,
+  ].join("|");
+
+  return crypto.createHash("sha256").update(fingerprintData).digest("hex");
+};
+
+const hashOtp = (otp: string, fingerprint: string): string =>
+  crypto.createHash("sha256").update(`${otp}:${fingerprint}`).digest("hex");
+
+const toDeviceFields = (details: DeviceDetails) => ({
+  browserName: details.browser,
+  browserVersion: details.browserVersion,
+  operatingSystem: details.operatingSystem,
+  deviceType: details.deviceType,
+  deviceModel: details.deviceModel,
+});
+
+/**
+ * Saves a login-history row. A failure to write history must never break
+ * the login itself, so errors are only logged.
+ */
+const recordLogin = async (
+  userId: number | null,
+  status: string,
+  ipAddress: string | null,
+  details: DeviceDetails
+): Promise<{ id: number } | null> => {
+  try {
+    const row = await prisma.loginHistory.create({
+      data: {
+        userId,
+        status: status as any,
+        ipAddress,
+        ...toDeviceFields(details),
+      },
+    });
+
+    return { id: row.id };
+  } catch (error) {
+    console.error("Failed to write login history:", error);
+    return null;
+  }
+};
+
+const resolveTheme = async (user: {
+  id: number;
+  themePreference: ThemePreference;
+  themePreferenceMode: "AUTO" | "MANUAL";
+}): Promise<ThemePreference> => {
+  if (user.themePreferenceMode !== "AUTO") {
+    return user.themePreference;
+  }
+
+  const themePreference = getAutomaticTheme();
+
+  if (themePreference !== user.themePreference) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { themePreference },
+    });
+  }
+
+  return themePreference;
 };
 
 const issueLoginSession = async (
@@ -62,12 +146,11 @@ const issueLoginSession = async (
     id: number;
     username: string;
     email: string;
-    themePreference: ThemePreference;
     themePreferenceMode: "AUTO" | "MANUAL";
   },
   themePreference: ThemePreference,
   ipAddress: string | null,
-  deviceDetails: ReturnType<typeof detectDevice>
+  deviceDetails: DeviceDetails
 ) => {
   const secret = getJwtSecret();
 
@@ -76,10 +159,7 @@ const issueLoginSession = async (
   }
 
   const token = jwt.sign(
-    {
-      userId: user.id,
-      email: user.email,
-    },
+    { userId: user.id, email: user.email },
     secret,
     { expiresIn: "7d" }
   );
@@ -98,13 +178,16 @@ const issueLoginSession = async (
   };
 };
 
+/* -------------------------------------------------------------------------- */
+/* Register                                                                   */
+/* -------------------------------------------------------------------------- */
+
 export const register = async (req: Request, res: Response) => {
   try {
-    const { username, email, password } = req.body;
+    const { username, email, password } = req.body ?? {};
 
     const normalizedEmail =
       typeof email === "string" ? email.trim().toLowerCase() : "";
-
     const normalizedUsername =
       typeof username === "string" ? username.trim() : "";
 
@@ -120,21 +203,25 @@ export const register = async (req: Request, res: Response) => {
       });
     }
 
+    if (!EMAIL_REGEX.test(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter a valid email address",
+      });
+    }
+
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+      });
+    }
+
     const existingUser = await prisma.user.findFirst({
       where: {
         OR: [
-          {
-            email: {
-              equals: normalizedEmail,
-              mode: "insensitive",
-            },
-          },
-          {
-            username: {
-              equals: normalizedUsername,
-              mode: "insensitive",
-            },
-          },
+          { email: { equals: normalizedEmail, mode: "insensitive" } },
+          { username: { equals: normalizedUsername, mode: "insensitive" } },
         ],
       },
     });
@@ -168,9 +255,7 @@ export const register = async (req: Request, res: Response) => {
           userId: user.id,
           planId: freePlan.id,
           startDate: new Date(),
-          endDate: new Date(
-            Date.now() + 30 * 24 * 60 * 60 * 1000
-          ),
+          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         },
       });
     }
@@ -196,14 +281,20 @@ export const register = async (req: Request, res: Response) => {
   }
 };
 
+/* -------------------------------------------------------------------------- */
+/* Login                                                                      */
+/* -------------------------------------------------------------------------- */
+
 export const login = async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body ?? {};
 
     const normalizedEmail =
       typeof email === "string" ? email.trim().toLowerCase() : "";
 
     if (!normalizedEmail || typeof password !== "string" || !password) {
+      console.warn("LOGIN FAIL: missing email or password in request body");
+
       return res.status(400).json({
         success: false,
         message: "Email and password are required",
@@ -215,117 +306,81 @@ export const login = async (req: Request, res: Response) => {
     const deviceDetails = detectDevice(userAgent);
 
     const user = await prisma.user.findFirst({
+      where: { email: { equals: normalizedEmail, mode: "insensitive" } },
+    });
+
+    // Always run a bcrypt compare so response time is the same either way.
+    const passwordMatches = await bcrypt.compare(
+      password,
+      user ? user.password : DUMMY_PASSWORD_HASH
+    );
+
+    if (!user || !passwordMatches) {
+      // These logs show the REAL reason in Render > Logs.
+      // The client still only sees one generic message.
+      console.warn(
+        !user
+          ? `LOGIN FAIL: no user found for email "${normalizedEmail}"`
+          : `LOGIN FAIL: password mismatch for user id ${user.id}`
+      );
+
+      await recordLogin(user ? user.id : null, "FAILED", ipAddress, deviceDetails);
+
+      return res.status(401).json({
+        success: false,
+        message: "Invalid email or password",
+      });
+    }
+
+    const clientDeviceId = getClientDeviceId(req);
+    const deviceFingerprint = createDeviceFingerprint(
+      userAgent,
+      deviceDetails,
+      clientDeviceId
+    );
+
+    const existingTrustedDevice = await prisma.trustedDevice.findUnique({
       where: {
-        email: {
-          equals: normalizedEmail,
-          mode: "insensitive",
+        userId_deviceFingerprint: {
+          userId: user.id,
+          deviceFingerprint,
         },
       },
     });
-
-    if (!user) {
-      await prisma.loginHistory.create({
-        data: {
-          userId: null,
-          status: "FAILED",
-          ipAddress,
-          browserName: deviceDetails.browser,
-          browserVersion: deviceDetails.browserVersion,
-          operatingSystem: deviceDetails.operatingSystem,
-          deviceType: deviceDetails.deviceType,
-          deviceModel: deviceDetails.deviceModel,
-        },
-      });
-
-      return res.status(401).json({
-        success: false,
-        message: "Invalid email or password",
-      });
-    }
-
-    const passwordMatches = await bcrypt.compare(
-      password,
-      user.password
-    );
-
-    if (!passwordMatches) {
-      await prisma.loginHistory.create({
-        data: {
-          userId: user.id,
-          status: "FAILED",
-          ipAddress,
-          browserName: deviceDetails.browser,
-          browserVersion: deviceDetails.browserVersion,
-          operatingSystem: deviceDetails.operatingSystem,
-          deviceType: deviceDetails.deviceType,
-          deviceModel: deviceDetails.deviceModel,
-        },
-      });
-
-      return res.status(401).json({
-        success: false,
-        message: "Invalid email or password",
-      });
-    }
-
-    const deviceFingerprint = createDeviceFingerprint(
-      userAgent,
-      deviceDetails.browser,
-      deviceDetails.browserVersion,
-      deviceDetails.operatingSystem,
-      deviceDetails.deviceType,
-      deviceDetails.deviceModel
-    );
-
-    const existingTrustedDevice =
-      await prisma.trustedDevice.findUnique({
-        where: {
-          userId_deviceFingerprint: {
-            userId: user.id,
-            deviceFingerprint,
-          },
-        },
-      });
 
     const isTrusted =
       !!existingTrustedDevice &&
       !existingTrustedDevice.revokedAt &&
       existingTrustedDevice.trustedUntil > new Date();
 
+    /* ------------------------- New / untrusted device ------------------------ */
     if (!isTrusted) {
       const secret = getJwtSecret();
 
       if (!secret) {
+        console.error("LOGIN ERROR: JWT_SECRET is not set");
+
         return res.status(500).json({
           success: false,
           message: "Authentication configuration error",
         });
       }
 
-      const otp = crypto
-        .randomInt(0, 1_000_000)
-        .toString()
-        .padStart(6, "0");
+      // Cancel any older unused codes so only the newest code works.
+      await prisma.otpVerification.updateMany({
+        where: { userId: user.id, purpose: "LOGIN", status: "PENDING" },
+        data: { status: "EXPIRED" },
+      });
 
-      const expiresAt = new Date(
-        Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000
-      );
-
-      const otpHash = crypto
-        .createHash("sha256")
-        .update(`${otp}:${deviceFingerprint}`)
-        .digest("hex");
+      const otp = crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
+      const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
       const loginHistory = await prisma.loginHistory.create({
         data: {
           userId: user.id,
           status: "OTP_REQUIRED",
           ipAddress,
-          browserName: deviceDetails.browser,
-          browserVersion: deviceDetails.browserVersion,
-          operatingSystem: deviceDetails.operatingSystem,
-          deviceType: deviceDetails.deviceType,
-          deviceModel: deviceDetails.deviceModel,
+          ...toDeviceFields(deviceDetails),
         },
       });
 
@@ -333,7 +388,7 @@ export const login = async (req: Request, res: Response) => {
         data: {
           userId: user.id,
           loginHistoryId: loginHistory.id,
-          otpHash,
+          otpHash: hashOtp(otp, deviceFingerprint),
           purpose: "LOGIN",
           status: "PENDING",
           attempts: 0,
@@ -348,6 +403,8 @@ export const login = async (req: Request, res: Response) => {
       });
 
       if (!emailResult.success) {
+        console.error("OTP EMAIL FAILED:", emailResult);
+
         await prisma.otpVerification.update({
           where: { id: otpRecord.id },
           data: { status: "FAILED" },
@@ -384,42 +441,19 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
+    /* ----------------------------- Trusted device ---------------------------- */
     await prisma.trustedDevice.update({
       where: { id: existingTrustedDevice.id },
       data: {
         lastUsedAt: new Date(),
         ipAddress,
-        browserName: deviceDetails.browser,
-        browserVersion: deviceDetails.browserVersion,
-        operatingSystem: deviceDetails.operatingSystem,
-        deviceType: deviceDetails.deviceType,
-        deviceModel: deviceDetails.deviceModel,
+        ...toDeviceFields(deviceDetails),
       },
     });
 
-    let themePreference = user.themePreference;
+    const themePreference = await resolveTheme(user);
 
-    if (user.themePreferenceMode === "AUTO") {
-      themePreference = getAutomaticTheme();
-
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { themePreference },
-      });
-    }
-
-    await prisma.loginHistory.create({
-      data: {
-        userId: user.id,
-        status: "SUCCESS",
-        ipAddress,
-        browserName: deviceDetails.browser,
-        browserVersion: deviceDetails.browserVersion,
-        operatingSystem: deviceDetails.operatingSystem,
-        deviceType: deviceDetails.deviceType,
-        deviceModel: deviceDetails.deviceModel,
-      },
-    });
+    await recordLogin(user.id, "SUCCESS", ipAddress, deviceDetails);
 
     const sessionData = await issueLoginSession(
       user,
@@ -445,12 +479,13 @@ export const login = async (req: Request, res: Response) => {
   }
 };
 
-export const verifyLoginOtp = async (
-  req: Request,
-  res: Response
-) => {
+/* -------------------------------------------------------------------------- */
+/* Verify OTP                                                                 */
+/* -------------------------------------------------------------------------- */
+
+export const verifyLoginOtp = async (req: Request, res: Response) => {
   try {
-    const { otp, pendingToken } = req.body;
+    const { otp, pendingToken } = req.body ?? {};
 
     if (
       typeof otp !== "string" ||
@@ -467,6 +502,8 @@ export const verifyLoginOtp = async (
     const secret = getJwtSecret();
 
     if (!secret) {
+      console.error("VERIFY ERROR: JWT_SECRET is not set");
+
       return res.status(500).json({
         success: false,
         message: "Authentication configuration error",
@@ -482,7 +519,7 @@ export const verifyLoginOtp = async (
         throw new Error("Invalid verification token");
       }
 
-      claims = decoded as jwt.JwtPayload;
+      claims = decoded;
     } catch {
       return res.status(401).json({
         success: false,
@@ -508,14 +545,13 @@ export const verifyLoginOtp = async (
 
     const currentFingerprint = createDeviceFingerprint(
       userAgent,
-      deviceDetails.browser,
-      deviceDetails.browserVersion,
-      deviceDetails.operatingSystem,
-      deviceDetails.deviceType,
-      deviceDetails.deviceModel
+      deviceDetails,
+      getClientDeviceId(req)
     );
 
     if (currentFingerprint !== claims.deviceFingerprint) {
+      console.warn("VERIFY FAIL: device fingerprint changed since login");
+
       return res.status(401).json({
         success: false,
         message: "Verification must be completed on the same device",
@@ -575,35 +611,37 @@ export const verifyLoginOtp = async (
       });
     }
 
-    const submittedHash = crypto
-      .createHash("sha256")
-      .update(`${otp}:${currentFingerprint}`)
-      .digest("hex");
-
     const storedHashBuffer = Buffer.from(otpRecord.otpHash, "hex");
-    const submittedHashBuffer = Buffer.from(submittedHash, "hex");
+    const submittedHashBuffer = Buffer.from(
+      hashOtp(otp, currentFingerprint),
+      "hex"
+    );
 
     const hashesMatch =
       storedHashBuffer.length === submittedHashBuffer.length &&
       crypto.timingSafeEqual(storedHashBuffer, submittedHashBuffer);
 
     if (!hashesMatch) {
-      const newAttempts = otpRecord.attempts + 1;
-      const exhausted = newAttempts >= OTP_MAX_ATTEMPTS;
-
-      await prisma.otpVerification.update({
+      // Atomic increment, so parallel guesses cannot bypass the limit.
+      const updated = await prisma.otpVerification.update({
         where: { id: otpRecord.id },
-        data: {
-          attempts: newAttempts,
-          ...(exhausted ? { status: "FAILED" as const } : {}),
-        },
+        data: { attempts: { increment: 1 } },
       });
 
-      if (exhausted && otpRecord.loginHistoryId) {
-        await prisma.loginHistory.update({
-          where: { id: otpRecord.loginHistoryId },
-          data: { status: "OTP_FAILED" },
+      const exhausted = updated.attempts >= OTP_MAX_ATTEMPTS;
+
+      if (exhausted) {
+        await prisma.otpVerification.update({
+          where: { id: otpRecord.id },
+          data: { status: "FAILED" },
         });
+
+        if (otpRecord.loginHistoryId) {
+          await prisma.loginHistory.update({
+            where: { id: otpRecord.loginHistoryId },
+            data: { status: "OTP_FAILED" },
+          });
+        }
       }
 
       return res.status(exhausted ? 429 : 401).json({
@@ -611,7 +649,7 @@ export const verifyLoginOtp = async (
         message: exhausted
           ? "Too many incorrect attempts. Please log in again"
           : "Incorrect OTP",
-        attemptsRemaining: Math.max(0, OTP_MAX_ATTEMPTS - newAttempts),
+        attemptsRemaining: Math.max(0, OTP_MAX_ATTEMPTS - updated.attempts),
       });
     }
 
@@ -626,6 +664,7 @@ export const verifyLoginOtp = async (
       });
     }
 
+    // Mark the OTP as used. Only one request can succeed here.
     const consumed = await prisma.otpVerification.updateMany({
       where: {
         id: otpRecord.id,
@@ -633,10 +672,7 @@ export const verifyLoginOtp = async (
         attempts: { lt: OTP_MAX_ATTEMPTS },
         expiresAt: { gt: new Date() },
       },
-      data: {
-        status: "VERIFIED",
-        verifiedAt: new Date(),
-      },
+      data: { status: "VERIFIED", verifiedAt: new Date() },
     });
 
     if (consumed.count !== 1) {
@@ -658,11 +694,7 @@ export const verifyLoginOtp = async (
         },
       },
       update: {
-        browserName: deviceDetails.browser,
-        browserVersion: deviceDetails.browserVersion,
-        operatingSystem: deviceDetails.operatingSystem,
-        deviceType: deviceDetails.deviceType,
-        deviceModel: deviceDetails.deviceModel,
+        ...toDeviceFields(deviceDetails),
         ipAddress,
         trustedUntil,
         lastUsedAt: new Date(),
@@ -671,27 +703,14 @@ export const verifyLoginOtp = async (
       create: {
         userId: user.id,
         deviceFingerprint: currentFingerprint,
-        browserName: deviceDetails.browser,
-        browserVersion: deviceDetails.browserVersion,
-        operatingSystem: deviceDetails.operatingSystem,
-        deviceType: deviceDetails.deviceType,
-        deviceModel: deviceDetails.deviceModel,
+        ...toDeviceFields(deviceDetails),
         ipAddress,
         trustedUntil,
         lastUsedAt: new Date(),
       },
     });
 
-    let themePreference = user.themePreference;
-
-    if (user.themePreferenceMode === "AUTO") {
-      themePreference = getAutomaticTheme();
-
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { themePreference },
-      });
-    }
+    const themePreference = await resolveTheme(user);
 
     if (otpRecord.loginHistoryId) {
       await prisma.loginHistory.update({
@@ -724,12 +743,16 @@ export const verifyLoginOtp = async (
   }
 };
 
+/* -------------------------------------------------------------------------- */
+/* Theme                                                                      */
+/* -------------------------------------------------------------------------- */
+
 export const updateThemePreference = async (
   req: AuthRequest,
   res: Response
 ) => {
   try {
-    const { mode, theme } = req.body;
+    const { mode, theme } = req.body ?? {};
     const userId = req.user?.userId;
 
     if (!userId) {
@@ -746,11 +769,7 @@ export const updateThemePreference = async (
       });
     }
 
-    if (
-      mode === "MANUAL" &&
-      theme !== "LIGHT" &&
-      theme !== "DARK"
-    ) {
+    if (mode === "MANUAL" && theme !== "LIGHT" && theme !== "DARK") {
       return res.status(400).json({
         success: false,
         message: "Theme must be LIGHT or DARK in manual mode",
@@ -758,16 +777,11 @@ export const updateThemePreference = async (
     }
 
     const themePreference =
-      mode === "AUTO"
-        ? getAutomaticTheme()
-        : (theme as ThemePreference);
+      mode === "AUTO" ? getAutomaticTheme() : (theme as ThemePreference);
 
     const updatedUser = await prisma.user.update({
       where: { id: userId },
-      data: {
-        themePreferenceMode: mode,
-        themePreference,
-      },
+      data: { themePreferenceMode: mode, themePreference },
     });
 
     return res.status(200).json({
@@ -786,10 +800,11 @@ export const updateThemePreference = async (
   }
 };
 
-export const getLoginHistory = async (
-  req: AuthRequest,
-  res: Response
-) => {
+/* -------------------------------------------------------------------------- */
+/* Login history                                                              */
+/* -------------------------------------------------------------------------- */
+
+export const getLoginHistory = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
 
@@ -803,6 +818,7 @@ export const getLoginHistory = async (
     const history = await prisma.loginHistory.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
+      take: 100,
       select: {
         id: true,
         status: true,
@@ -831,10 +847,11 @@ export const getLoginHistory = async (
   }
 };
 
-export const logout = async (
-  req: AuthRequest,
-  res: Response
-) => {
+/* -------------------------------------------------------------------------- */
+/* Logout                                                                     */
+/* -------------------------------------------------------------------------- */
+
+export const logout = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
     const authHeader = req.headers.authorization;
@@ -865,11 +882,7 @@ export const logout = async (
     const sessionTokenHash = getSessionTokenHash(token);
 
     const session = await prisma.userSession.findFirst({
-      where: {
-        userId,
-        sessionTokenHash,
-        revokedAt: null,
-      },
+      where: { userId, sessionTokenHash, revokedAt: null },
     });
 
     if (!session) {
