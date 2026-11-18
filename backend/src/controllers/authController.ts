@@ -31,16 +31,16 @@ const getAutomaticTheme = (): ThemePreference => {
 
 const createDeviceFingerprint = (
   userAgent: string,
-  ipAddress: string,
   browser: string,
   browserVersion: string,
   operatingSystem: string,
   deviceType: string,
   deviceModel: string | null
 ): string => {
+  // Do not include IP address: Render/proxies and mobile networks can
+  // change it between login and OTP verification.
   const fingerprintData = [
     userAgent,
-    ipAddress,
     browser,
     browserVersion,
     operatingSystem,
@@ -103,8 +103,12 @@ const issueLoginSession = async (
 export const register = async (req: Request, res: Response) => {
   try {
     const { username, email, password } = req.body;
+    const normalizedEmail =
+      typeof email === "string" ? email.trim().toLowerCase() : "";
+    const normalizedUsername =
+      typeof username === "string" ? username.trim() : "";
 
-    if (!username || !email || !password) {
+    if (!normalizedUsername || !normalizedEmail || typeof password !== "string" || !password) {
       return res.status(400).json({
         success: false,
         message: "Username, email and password are required",
@@ -113,7 +117,10 @@ export const register = async (req: Request, res: Response) => {
 
     const existingUser = await prisma.user.findFirst({
       where: {
-        OR: [{ email }, { username }],
+        OR: [
+          { email: { equals: normalizedEmail, mode: "insensitive" } },
+          { username: { equals: normalizedUsername, mode: "insensitive" } },
+        ],
       },
     });
 
@@ -128,8 +135,8 @@ export const register = async (req: Request, res: Response) => {
 
     const user = await prisma.user.create({
       data: {
-        username,
-        email,
+        username: normalizedUsername,
+        email: normalizedEmail,
         password: hashedPassword,
         themePreference: "DARK",
         themePreferenceMode: "AUTO",
@@ -175,8 +182,10 @@ export const register = async (req: Request, res: Response) => {
 export const login = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
+    const normalizedEmail =
+      typeof email === "string" ? email.trim().toLowerCase() : "";
 
-    if (!email || !password) {
+    if (!normalizedEmail || typeof password !== "string" || !password) {
       return res.status(400).json({
         success: false,
         message: "Email and password are required",
@@ -187,8 +196,12 @@ export const login = async (req: Request, res: Response) => {
     const ipAddress = req.ip ?? null;
     const deviceDetails = detectDevice(userAgent);
 
-    const user = await prisma.user.findUnique({
-      where: { email },
+    // Case-insensitive lookup also handles older accounts created before
+    // email addresses were normalized to lowercase.
+    const user = await prisma.user.findFirst({
+      where: {
+        email: { equals: normalizedEmail, mode: "insensitive" },
+      },
     });
 
     if (!user) {
@@ -238,7 +251,6 @@ export const login = async (req: Request, res: Response) => {
 
     const deviceFingerprint = createDeviceFingerprint(
       userAgent,
-      ipAddress || "",
       deviceDetails.browser,
       deviceDetails.browserVersion,
       deviceDetails.operatingSystem,
@@ -481,7 +493,6 @@ export const verifyLoginOtp = async (
 
     const currentFingerprint = createDeviceFingerprint(
       userAgent,
-      ipAddress || "",
       deviceDetails.browser,
       deviceDetails.browserVersion,
       deviceDetails.operatingSystem,
