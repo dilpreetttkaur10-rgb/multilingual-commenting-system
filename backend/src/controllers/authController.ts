@@ -1,4 +1,3 @@
-
 import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -58,7 +57,6 @@ const getJwtSecret = (): string | null => {
   return process.env.JWT_SECRET || null;
 };
 
-// Creates an authenticated JWT and its corresponding database session.
 const issueLoginSession = async (
   user: {
     id: number;
@@ -103,12 +101,19 @@ const issueLoginSession = async (
 export const register = async (req: Request, res: Response) => {
   try {
     const { username, email, password } = req.body;
+
     const normalizedEmail =
       typeof email === "string" ? email.trim().toLowerCase() : "";
+
     const normalizedUsername =
       typeof username === "string" ? username.trim() : "";
 
-    if (!normalizedUsername || !normalizedEmail || typeof password !== "string" || !password) {
+    if (
+      !normalizedUsername ||
+      !normalizedEmail ||
+      typeof password !== "string" ||
+      !password
+    ) {
       return res.status(400).json({
         success: false,
         message: "Username, email and password are required",
@@ -118,8 +123,18 @@ export const register = async (req: Request, res: Response) => {
     const existingUser = await prisma.user.findFirst({
       where: {
         OR: [
-          { email: { equals: normalizedEmail, mode: "insensitive" } },
-          { username: { equals: normalizedUsername, mode: "insensitive" } },
+          {
+            email: {
+              equals: normalizedEmail,
+              mode: "insensitive",
+            },
+          },
+          {
+            username: {
+              equals: normalizedUsername,
+              mode: "insensitive",
+            },
+          },
         ],
       },
     });
@@ -153,7 +168,9 @@ export const register = async (req: Request, res: Response) => {
           userId: user.id,
           planId: freePlan.id,
           startDate: new Date(),
-          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          endDate: new Date(
+            Date.now() + 30 * 24 * 60 * 60 * 1000
+          ),
         },
       });
     }
@@ -182,6 +199,7 @@ export const register = async (req: Request, res: Response) => {
 export const login = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
+
     const normalizedEmail =
       typeof email === "string" ? email.trim().toLowerCase() : "";
 
@@ -196,11 +214,12 @@ export const login = async (req: Request, res: Response) => {
     const ipAddress = req.ip ?? null;
     const deviceDetails = detectDevice(userAgent);
 
-    // Case-insensitive lookup also handles older accounts created before
-    // email addresses were normalized to lowercase.
     const user = await prisma.user.findFirst({
       where: {
-        email: { equals: normalizedEmail, mode: "insensitive" },
+        email: {
+          equals: normalizedEmail,
+          mode: "insensitive",
+        },
       },
     });
 
@@ -273,7 +292,6 @@ export const login = async (req: Request, res: Response) => {
       !existingTrustedDevice.revokedAt &&
       existingTrustedDevice.trustedUntil > new Date();
 
-    // Untrusted devices must complete OTP verification first.
     if (!isTrusted) {
       const secret = getJwtSecret();
 
@@ -323,7 +341,6 @@ export const login = async (req: Request, res: Response) => {
         },
       });
 
-      // No trusted device, authenticated JWT, or session is created here.
       const emailResult = await sendLoginOtpEmail({
         email: user.email,
         otp,
@@ -347,7 +364,6 @@ export const login = async (req: Request, res: Response) => {
         });
       }
 
-      // This is a short-lived verification token, not an auth session.
       const pendingToken = jwt.sign(
         {
           purpose: "LOGIN_OTP",
@@ -368,7 +384,6 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
-    // Trusted device: continue with normal login.
     await prisma.trustedDevice.update({
       where: { id: existingTrustedDevice.id },
       data: {
@@ -611,7 +626,6 @@ export const verifyLoginOtp = async (
       });
     }
 
-    // Consume the OTP only if it is still pending and unexpired.
     const consumed = await prisma.otpVerification.updateMany({
       where: {
         id: otpRecord.id,
@@ -632,7 +646,6 @@ export const verifyLoginOtp = async (
       });
     }
 
-    // Trust the device only after successful OTP verification.
     const trustedUntil = new Date(
       Date.now() + TRUSTED_DEVICE_DAYS * 24 * 60 * 60 * 1000
     );
