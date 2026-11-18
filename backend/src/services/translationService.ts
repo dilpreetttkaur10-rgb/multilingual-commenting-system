@@ -63,6 +63,7 @@ async function viaGemini(text: string, target: string): Promise<string> {
   const body = {
     systemInstruction: { parts: [{ text: instruction }] },
     contents: [{ parts: [{ text: text }] }],
+    generationConfig: { temperature: 0 },
   };
 
   let lastError: any = new Error("Gemini failed");
@@ -71,11 +72,11 @@ async function viaGemini(text: string, target: string): Promise<string> {
       "https://generativelanguage.googleapis.com/v1beta/models/" +
       model +
       ":generateContent";
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       try {
         const res = await axios.post(url, body, {
           headers: { "x-goog-api-key": GEMINI_KEY || "" },
-          timeout: 12000,
+          timeout: 20000,
         });
         const out = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
         if (!out) {
@@ -85,7 +86,15 @@ async function viaGemini(text: string, target: string): Promise<string> {
       } catch (err: any) {
         lastError = err;
         const status = err.response?.status;
-        if (status !== 503 && status !== 429) {
+        const retryable =
+          status === undefined || status === 503 || status === 429;
+        console.error(
+          "Gemini attempt failed:",
+          model,
+          status,
+          err.response?.data || err.message
+        );
+        if (!retryable) {
           break;
         }
         await sleep(1000 * (i + 1));
