@@ -24,59 +24,78 @@ const languageCodes: Record<string, string> = {
 
 function normalizeLanguage(language: string): string {
   const trimmed = language.trim();
-
-  if (/^[a-z]{2,3}(-[a-zA-Z]{2,4})?$/i.test(trimmed)) {
+  const isCode = /^[a-z]{2,3}(-[a-zA-Z]{2,4})?$/i.test(trimmed);
+  if (isCode) {
     return trimmed.toLowerCase();
   }
-
   return languageCodes[trimmed] || trimmed.toLowerCase();
+}
+
+const LT_URL = process.env.LIBRETRANSLATE_URL;
+const LT_KEY = process.env.LIBRETRANSLATE_API_KEY;
+
+async function viaLibre(
+  text: string,
+  target: string,
+  source: string
+): Promise<string> {
+  const body = {
+    q: text,
+    source: source || "auto",
+    target: target,
+    format: "text",
+    api_key: LT_KEY,
+  };
+  const url = `${LT_URL}/translate`;
+  const res = await axios.post(url, body, { timeout: 8000 });
+  return res.data.translatedText as string;
+}
+
+async function viaMyMemory(
+  text: string,
+  target: string,
+  source: string
+): Promise<string> {
+  const from = source || "Autodetect";
+  const res = await axios.get("https://api.mymemory.translated.net/get", {
+    params: { q: text.slice(0, 450), langpair: `${from}|${target}` },
+    timeout: 8000,
+  });
+  if (res.data.responseStatus !== 200) {
+    throw new Error(String(res.data.responseDetails));
+  }
+  return res.data.responseData.translatedText as string;
 }
 
 export const translateText = async (
   text: string,
   targetLanguage: string,
-  sourceLanguage: string = "auto"
-): Promise<string | null> => {
-  try {
-    if (!text?.trim() || !targetLanguage?.trim()) {
-      return null;
-    }
+  sourceLanguage?: string
+): Promise<string> => {
+  const target = normalizeLanguage(targetLanguage);
 
-    const response = await axios.post(
-      "https://libretranslate.de/translate",
-      {
-        q: text,
-        source: normalizeLanguage(sourceLanguage),
-        target: normalizeLanguage(targetLanguage),
-        format: "text",
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        timeout: 20000,
-      }
-    );
-
-    const translatedText = response.data?.translatedText;
-
-    if (
-      typeof translatedText !== "string" ||
-      !translatedText.trim()
-    ) {
-      console.error("Invalid LibreTranslate response:", response.data);
-      return null;
-    }
-
-    return translatedText;
-  } catch (error: any) {
-    console.error(
-      "LibreTranslate failed:",
-      error.response?.status,
-      error.response?.data || error.message
-    );
-
-    return null;
+  let source = sourceLanguage ? normalizeLanguage(sourceLanguage) : "";
+  if (source === "auto" || source === target) {
+    source = "";
   }
+
+  const attempts: Array<() => Promise<string>> = [];
+  if (LT_URL) {
+    attempts.push(() => viaLibre(text, target, source));
+  }
+  attempts.push(() => viaMyMemory(text, target, source));
+
+  for (const attempt of attempts) {
+    try {
+      return await attempt();
+    } catch (err: any) {
+      console.error(
+        "Translation attempt failed:",
+        err.response?.status,
+        err.response?.data || err.message
+      );
+    }
+  }
+
+  throw new Error("Translation unavailable");
 };
