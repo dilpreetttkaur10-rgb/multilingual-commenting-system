@@ -1,3 +1,52 @@
+import axios from "axios";
+
+const languageCodes: Record<string, string> = {
+  English: "en",
+  Hindi: "hi",
+  Punjabi: "pa",
+  French: "fr",
+  Spanish: "es",
+  German: "de",
+  Arabic: "ar",
+  Chinese: "zh",
+  Japanese: "ja",
+  Korean: "ko",
+  Portuguese: "pt",
+  Russian: "ru",
+  Italian: "it",
+  Bengali: "bn",
+  Urdu: "ur",
+  Tamil: "ta",
+  Telugu: "te",
+  Marathi: "mr",
+  Gujarati: "gu",
+};
+
+function normalizeLanguage(language: string): string {
+  const trimmed = language.trim();
+  const isCode = /^[a-z]{2,3}(-[a-zA-Z]{2,4})?$/i.test(trimmed);
+  if (isCode) {
+    return trimmed.toLowerCase();
+  }
+  return languageCodes[trimmed] || trimmed.toLowerCase();
+}
+
+const GEMINI_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+
+const cache = new Map<string, string>();
+const CACHE_LIMIT = 1000;
+
+function saveToCache(key: string, value: string): void {
+  if (cache.size >= CACHE_LIMIT) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) {
+      cache.delete(oldest);
+    }
+  }
+  cache.set(key, value);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -44,4 +93,41 @@ async function viaGemini(text: string, target: string): Promise<string> {
     }
   }
   throw lastError;
+}
+
+export async function translateText(
+  text: string,
+  targetLanguage: string,
+  sourceLanguage?: string
+): Promise<string> {
+  const target = normalizeLanguage(targetLanguage);
+
+  let source = sourceLanguage ? normalizeLanguage(sourceLanguage) : "";
+  if (source === "auto" || source === target) {
+    source = "";
+  }
+
+  const cacheKey = `${source}|${target}|${text}`;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  if (!GEMINI_KEY) {
+    console.error("GEMINI_API_KEY is not set");
+    throw new Error("Translation unavailable");
+  }
+
+  try {
+    const result = await viaGemini(text, target);
+    saveToCache(cacheKey, result);
+    return result;
+  } catch (err: any) {
+    console.error(
+      "Translation attempt failed:",
+      err.response?.status,
+      err.response?.data || err.message
+    );
+    throw new Error("Translation unavailable");
+  }
 }
