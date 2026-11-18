@@ -8,7 +8,7 @@ const languageCodes: Record<string, string> = {
   Spanish: "es",
   German: "de",
   Arabic: "ar",
-  Chinese: "zh-CN",
+  Chinese: "zh",
   Japanese: "ja",
   Korean: "ko",
   Portuguese: "pt",
@@ -25,9 +25,8 @@ const languageCodes: Record<string, string> = {
 function normalizeLanguage(language: string): string {
   const trimmed = language.trim();
 
-  // Already a language code, e.g. "hi", "pa", "fr"
   if (/^[a-z]{2,3}(-[a-zA-Z]{2,4})?$/i.test(trimmed)) {
-    return trimmed;
+    return trimmed.toLowerCase();
   }
 
   return languageCodes[trimmed] || trimmed.toLowerCase();
@@ -43,46 +42,37 @@ export const translateText = async (
       return null;
     }
 
-    const target = normalizeLanguage(targetLanguage);
-    const source = normalizeLanguage(sourceLanguage);
-
-    const response = await axios.get(
-      "https://translate.googleapis.com/translate_a/single",
+    const response = await axios.post(
+      "https://libretranslate.de/translate",
       {
-        params: {
-          client: "gtx",
-          sl: source,
-          tl: target,
-          dt: "t",
-          q: text,
-        },
-        timeout: 15000,
+        q: text,
+        source: normalizeLanguage(sourceLanguage),
+        target: normalizeLanguage(targetLanguage),
+        format: "text",
+      },
+      {
         headers: {
-          "User-Agent": "Mozilla/5.0",
+          "Content-Type": "application/json",
+          Accept: "application/json",
         },
+        timeout: 20000,
       }
     );
 
-    const data = response.data;
+    const translatedText = response.data?.translatedText;
 
-    if (!Array.isArray(data) || !Array.isArray(data[0])) {
-      console.error("Unexpected translation response:", data);
-      return null;
-    }
-
-    const translatedText = data[0]
-      .map((part: any) => (Array.isArray(part) ? part[0] : ""))
-      .filter(Boolean)
-      .join("");
-
-    if (!translatedText.trim()) {
+    if (
+      typeof translatedText !== "string" ||
+      !translatedText.trim()
+    ) {
+      console.error("Invalid LibreTranslate response:", response.data);
       return null;
     }
 
     return translatedText;
   } catch (error: any) {
     console.error(
-      "Translation failed:",
+      "LibreTranslate failed:",
       error.response?.status,
       error.response?.data || error.message
     );
